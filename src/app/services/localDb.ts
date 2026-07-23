@@ -14,8 +14,20 @@ const MARKET_KEY = 'market_snapshot';
 const TTL = 20 * 60 * 60 * 1000; 
 // Intraday fund estimates are decision inputs; keep the browser cache short.
 const FUND_TTL = 2 * 60 * 1000;
-// v7.9: Reduce Market Snapshot TTL to 10s for more responsive updates
-const MARKET_TTL = 10 * 1000;
+// Intraday snapshots remain short-lived, while the verified closing snapshot
+// can be reused after the bell. This avoids repeatedly cold-scanning 5,800+
+// symbols and losing direct large-order fields on every closed-market reload.
+const MARKET_TTL_LIVE = 10 * 1000;
+const MARKET_TTL_CLOSED = 12 * 60 * 60 * 1000;
+
+const isChinaMarketSession = (date = new Date()) => {
+    const china = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+    const weekday = china.getUTCDay();
+    const minutes = china.getUTCHours() * 60 + china.getUTCMinutes();
+    return weekday >= 1 && weekday <= 5 &&
+        ((minutes >= 9 * 60 + 15 && minutes <= 11 * 60 + 35) ||
+         (minutes >= 12 * 60 + 55 && minutes <= 15 * 60 + 5));
+};
 
 export const getLocalHistoryBatch = async (codes: string[]) => {
     try {
@@ -96,7 +108,8 @@ export const getLocalMarketSnapshot = async () => {
         const val = await getMany([MARKET_KEY]);
         const snapshot = val[0] as { data: any, timestamp: number } | undefined;
         const now = Date.now();
-        if (snapshot && snapshot.data && (now - snapshot.timestamp < MARKET_TTL)) {
+        const maxAgeMs = isChinaMarketSession() ? MARKET_TTL_LIVE : MARKET_TTL_CLOSED;
+        if (snapshot && snapshot.data && (now - snapshot.timestamp < maxAgeMs)) {
             return snapshot.data;
         }
         return null;
