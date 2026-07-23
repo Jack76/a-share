@@ -747,7 +747,7 @@ export const fetchMarketStats = async (includeList = false): Promise<MarketStats
     try {
       const resp = await fetchWithRetry(url, {
         headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-      }, 0, 10000, true);
+      }, 0, 30000, true);
 
       if (!resp.ok) return null;
 

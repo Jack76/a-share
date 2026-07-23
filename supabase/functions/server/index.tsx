@@ -372,7 +372,7 @@ api.get("/market/themes", async (c) => {
 
       const fetchBatch = async (batchCodes: string[]) => {
           // 1. Tencent L1 Data (Base)
-          const tencentUrl = `https://qt.gtimg.cn/q=${batchCodes.join(',')}`;
+          const tencentUrl = `https://web.sqt.gtimg.cn/q=${batchCodes.join(',')}`;
           
           // 2. Eastmoney Flow Data (Add-on)
           // Map sh/sz to 1/0
@@ -383,25 +383,36 @@ api.get("/market/themes", async (c) => {
               return `0.${c}`; // Default
           }).join(',');
           
-          const emUrl = `https://push2.eastmoney.com/api/qt/ulist.np/get?secids=${emIds}&fields=f12,f62,f184,f185,f186,f187,f188,f189`;
+          const emPath = `/api/qt/ulist.np/get?fltt=2&invt=2&secids=${emIds}&fields=f12,f14,f2,f3,f5,f6,f8,f15,f16,f17,f18,f62,f124,f184,f185,f186,f187,f188,f189`;
+          const emUrls = [
+              `https://push2.eastmoney.com${emPath}`,
+              `https://push2delay.eastmoney.com${emPath}`,
+          ];
 
           try {
-              const controller = new AbortController();
-              const timeout = setTimeout(() => controller.abort(), 10000);
-              
               // Run both fetches in parallel, but handle failures independently
               // V49.5 FIX: Handle Eastmoney TLS Drop / Rate Limit gracefully
               // If EM fails, we still want the Tencent price data.
-              const tencentPromise = fetch(tencentUrl, {
-                  signal: controller.signal,
-                  headers: { "User-Agent": "Mozilla/5.0" }
-              });
+              const tencentPromise = (async () => {
+                  const controller = new AbortController();
+                  const timeout = setTimeout(() => controller.abort(), 8000);
+                  try {
+                      return await fetch(tencentUrl, {
+                          signal: controller.signal,
+                          headers: { "User-Agent": "Mozilla/5.0" }
+                      });
+                  } finally {
+                      clearTimeout(timeout);
+                  }
+              })();
 
               // Add retry logic for Eastmoney
               const fetchEmWithRetry = async (retries = 1) => {
                   for (let i = 0; i <= retries; i++) {
+                      const controller = new AbortController();
+                      const timeout = setTimeout(() => controller.abort(), 8000);
                       try {
-                          const resp = await fetch(emUrl, {
+                          const resp = await fetch(emUrls[i % emUrls.length], {
                               signal: controller.signal,
                               headers: { 
                                   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -410,15 +421,13 @@ api.get("/market/themes", async (c) => {
                                   "Connection": "keep-alive"
                               }
                           });
+                          if (!resp.ok) throw new Error(`Eastmoney status ${resp.status}`);
                           return resp;
                       } catch (e: any) {
                           if (i === retries) throw e;
-                          // If connection reset/closed, wait small amount
-                          if (e.message?.includes('closed connection') || e.name === 'Http') {
-                              await new Promise(r => setTimeout(r, 200 * (i + 1)));
-                              continue;
-                          }
-                          throw e;
+                          await new Promise(r => setTimeout(r, 200 * (i + 1)));
+                      } finally {
+                          clearTimeout(timeout);
                       }
                   }
               };
@@ -428,8 +437,6 @@ api.get("/market/themes", async (c) => {
                   tencentPromise,
                   fetchEmWithRetry()
               ]);
-              
-              clearTimeout(timeout);
 
               // Process Tencent Data
               if (tencentResult.status === 'fulfilled' && tencentResult.value.ok) {
@@ -511,9 +518,50 @@ api.get("/market/themes", async (c) => {
                                   const rawCode = item.f12;
                                   const flow = parseFloat(item.f62);
                                   
-                                  // Match back to original code key (try sh/sz prefixes)
+                                  // Match back to the requested code key. Eastmoney is
+                                  // also a complete quote fallback when Tencent L1 is
+                                  // unavailable from the edge region.
                                   const possibleKeys = [`sh${rawCode}`, `sz${rawCode}`, `bj${rawCode}`, rawCode];
-                                  const matchedKey = possibleKeys.find(k => results[k]);
+                                  const matchedKey = possibleKeys.find(k => batchCodes.includes(k))
+                                    || possibleKeys.find(k => results[k]);
+
+                                  if (matchedKey && !results[matchedKey]) {
+                                      const numberOrZero = (value: unknown) => {
+                                          const parsed = Number(value);
+                                          return Number.isFinite(parsed) ? parsed : 0;
+                                      };
+                                      const sourceTimestamp = numberOrZero(item.f124) * 1000;
+                                      const sourceAsOf = sourceTimestamp > 1_500_000_000_000
+                                          ? new Date(sourceTimestamp).toISOString()
+                                          : undefined;
+                                      const currentPrice = numberOrZero(item.f2);
+                                      const previousClose = numberOrZero(item.f18);
+                                      const changePercent = numberOrZero(item.f3);
+                                      const limitState = calculateLimitState({
+                                          code: rawCode,
+                                          name: String(item.f14 || rawCode),
+                                          currentPrice,
+                                          previousClose,
+                                          changePercent,
+                                      });
+                                      results[matchedKey] = {
+                                          name: String(item.f14 || rawCode),
+                                          currentPrice,
+                                          changePercent,
+                                          high: numberOrZero(item.f15),
+                                          low: numberOrZero(item.f16),
+                                          open: numberOrZero(item.f17),
+                                          prevClose: previousClose,
+                                          volume: numberOrZero(item.f5),
+                                          turnover: numberOrZero(item.f6),
+                                          turnoverRate: numberOrZero(item.f8),
+                                          limitUpPrice: limitState.limitUpPrice,
+                                          limitDownPrice: limitState.limitDownPrice,
+                                          isLimitUp: limitState.isLimitUp,
+                                          isLimitDown: limitState.isLimitDown,
+                                          sourceAsOf,
+                                      };
+                                  }
                                   
                                   if (matchedKey && results[matchedKey]) {
                                       if (!isNaN(flow)) {
@@ -988,101 +1036,69 @@ const isChinaMarketSession = (date: Date) => {
 
 const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
   const startedAt = Date.now();
-  const segments = [
-    "m:1+t:2",
-    "m:1+t:23",
-    "m:0+t:6",
-    "m:0+t:80",
-    "m:0+t:81+s:2048",
-  ];
-  const BATCH_SIZE = 200;
-  const MAX_PAGES = 20;
-  const PAGE_CONCURRENCY = 3;
+  // Eastmoney accepts a combined market filter. Fetching the five boards as
+  // one paginated universe cuts cold-start waves roughly in half and avoids
+  // returning a board-biased partial sample.
+  const MARKET_FILTER = "m:1+t:2,m:1+t:23,m:0+t:6,m:0+t:80,m:0+t:81+s:2048";
+  const BATCH_SIZE = 100; // Upstream silently caps pages at 100 records.
+  const MAX_PAGES = 65;
+  const PAGE_CONCURRENCY = 4;
   const FIELDS = "f12,f14,f2,f3,f4,f5,f6,f8,f15,f16,f17,f18,f51,f52,f124";
+  const EASTMONEY_HOSTS = ["push2.eastmoney.com", "push2delay.eastmoney.com"];
+  let pagesRequested = 0;
+  let pagesSucceeded = 0;
 
-  const fetchSegment = async (fs: string) => {
-    let pagesRequested = 0;
-    let pagesSucceeded = 0;
-
-    const fetchPage = async (page: number) => {
-      pagesRequested++;
-      const url = `https://push2.eastmoney.com/api/qt/clist/get?pn=${page}&pz=${BATCH_SIZE}&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=${fs}&fields=${FIELDS}&_=${Date.now()}`;
-
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10_000);
-        try {
-          const response = await fetch(url, {
-            headers: {
-              "User-Agent": "Mozilla/5.0",
-              "Referer": "https://quote.eastmoney.com/",
-            },
-            signal: controller.signal,
-          });
-          if (!response.ok) throw new Error(`Status ${response.status}`);
-          const json = await response.json();
-          const diff = json?.data?.diff;
-          const items = Array.isArray(diff) ? diff : diff ? Object.values(diff) : [];
-          pagesSucceeded++;
-          return { ok: true, items, total: Number(json?.data?.total) || 0 };
-        } catch (error) {
-          if (attempt === 2) return { ok: false, items: [], total: 0 };
-          await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
-        } finally {
-          clearTimeout(timeoutId);
-        }
+  const fetchPage = async (page: number) => {
+    pagesRequested++;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8_000);
+      const host = EASTMONEY_HOSTS[attempt % EASTMONEY_HOSTS.length];
+      const url = `https://${host}/api/qt/clist/get?pn=${page}&pz=${BATCH_SIZE}&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=${MARKET_FILTER}&fields=${FIELDS}&_=${Date.now()}-${page}-${attempt}`;
+      try {
+        const response = await fetch(url, {
+          headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://quote.eastmoney.com/",
+          },
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`Status ${response.status}`);
+        const json = await response.json();
+        const diff = json?.data?.diff;
+        const items = Array.isArray(diff) ? diff : diff ? Object.values(diff) : [];
+        if (items.length === 0) throw new Error("Empty market page");
+        pagesSucceeded++;
+        return { ok: true, items, total: Number(json?.data?.total) || 0 };
+      } catch (error) {
+        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+      } finally {
+        clearTimeout(timeoutId);
       }
-      return { ok: false, items: [], total: 0 };
-    };
-
-    const firstPage = await fetchPage(1);
-    if (!firstPage.ok) {
-      return { items: [], expected: 0, pagesRequested, pagesSucceeded, ok: false };
     }
-
-    const expected = firstPage.total || firstPage.items.length;
-    const totalPages = firstPage.total > 0
-      ? Math.min(MAX_PAGES, Math.max(1, Math.ceil(firstPage.total / BATCH_SIZE)))
-      : firstPage.items.length >= BATCH_SIZE ? MAX_PAGES : 1;
-    const pageNumbers = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2);
-    const pageResults = [firstPage];
-
-    for (let start = 0; start < pageNumbers.length; start += PAGE_CONCURRENCY) {
-      pageResults.push(...await Promise.all(
-        pageNumbers.slice(start, start + PAGE_CONCURRENCY).map(fetchPage),
-      ));
-    }
-
-    const seen = new Set<string>();
-    const items: any[] = [];
-    pageResults.flatMap(page => page.items).forEach((item: any) => {
-      if (item?.f12 && !seen.has(item.f12)) {
-        seen.add(item.f12);
-        items.push(item);
-      }
-    });
-
-    return { items, expected, pagesRequested, pagesSucceeded, ok: items.length > 0 };
+    return { ok: false, items: [] as any[], total: 0 };
   };
 
-  // Avoid a cold-start burst of 20+ requests from one edge IP, which causes
-  // Eastmoney to reject every segment. Segments run sequentially while pages
-  // retain bounded concurrency.
-  const segmentResults = [];
-  for (const segment of segments) {
-    segmentResults.push(await fetchSegment(segment));
+  const firstPage = await fetchPage(1);
+  if (!firstPage.ok || firstPage.total <= 0) {
+    throw new Error("Market universe unavailable");
   }
-  const segmentsSucceeded = segmentResults.filter(segment => segment.ok).length;
-  const expectedRecords = segmentResults.reduce((sum, segment) => sum + segment.expected, 0);
-  const fetchedRecords = segmentResults.reduce((sum, segment) => sum + segment.items.length, 0);
-  const pagesRequested = segmentResults.reduce((sum, segment) => sum + segment.pagesRequested, 0);
-  const pagesSucceeded = segmentResults.reduce((sum, segment) => sum + segment.pagesSucceeded, 0);
-  const recordCoverage = expectedRecords > 0 ? Math.min(1, fetchedRecords / expectedRecords) : 0;
-  const segmentCoverage = segmentsSucceeded / segments.length;
-  const coverage = Math.min(recordCoverage, segmentCoverage);
+  const expectedRecords = firstPage.total;
+  const totalPages = Math.min(MAX_PAGES, Math.ceil(expectedRecords / BATCH_SIZE));
+  const pageNumbers = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2);
+  const pageResults = [firstPage];
+  for (let start = 0; start < pageNumbers.length; start += PAGE_CONCURRENCY) {
+    pageResults.push(...await Promise.all(
+      pageNumbers.slice(start, start + PAGE_CONCURRENCY).map(fetchPage),
+    ));
+  }
+  const segmentsSucceeded = 1;
+  const segmentsTotal = 1;
+  const fetchedRecords = pageResults.reduce((sum, page) => sum + page.items.length, 0);
+  const coverage = expectedRecords > 0 ? Math.min(1, fetchedRecords / expectedRecords) : 0;
 
   const stockByCode = new Map<string, any>();
-  segmentResults.flatMap(segment => segment.items).forEach((item: any) => {
+  pageResults.flatMap(page => page.items).forEach((item: any) => {
     if (item?.f12) stockByCode.set(item.f12, item);
   });
   const stocks = Array.from(stockByCode.values());
@@ -1100,9 +1116,9 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
     : now;
   const sourceAgeMs = Math.max(0, now - sourceTimestamp);
 
-  if (stocks.length < 1_000 || segmentsSucceeded < 2) {
+  if (stocks.length < 1_000 || coverage < 0.75) {
     throw new Error(
-      `Market coverage insufficient: records=${stocks.length}, segments=${segmentsSucceeded}/${segments.length}, coverage=${coverage.toFixed(3)}`,
+      `Market coverage insufficient: records=${stocks.length}, pages=${pagesSucceeded}/${pagesRequested}, coverage=${coverage.toFixed(3)}`,
     );
   }
   if (isChinaMarketSession(new Date(now)) && sourceAgeMs > 180_000) {
@@ -1170,7 +1186,7 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
   });
 
   const dataStatus: MarketDataStatus = stocks.length >= 4_000 &&
-    segmentsSucceeded >= 4 &&
+    segmentsSucceeded === segmentsTotal &&
     coverage >= 0.97 &&
     pagesSucceeded === pagesRequested
     ? "FRESH"
@@ -1200,7 +1216,7 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
       records: list.length,
       expectedRecords,
       segmentsSucceeded,
-      segmentsTotal: segments.length,
+      segmentsTotal,
       pagesSucceeded,
       pagesRequested,
       durationMs: Date.now() - startedAt,

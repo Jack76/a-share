@@ -180,7 +180,7 @@ const isMarketStatsUsable = (snapshot: MarketStatsSnapshot | null): snapshot is 
     (quality.sourceAgeMs || 0) <= maxSourceAgeMs;
   return quality.status !== 'UNAVAILABLE' &&
     quality.coverage >= 0.75 &&
-    quality.segmentsSucceeded >= 2 &&
+    quality.segmentsSucceeded >= 1 &&
     getMarketStatsAge(snapshot) <= 120_000 &&
     sourceIsFreshEnough;
 };
