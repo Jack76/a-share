@@ -99,7 +99,7 @@ export interface Stock {
   code: string;
   name: string;
   concept?: string;
-  role: 'Leader' | 'Vice' | 'Substitute' | 'Independent' | 'Main' | 'Follower' | 'Normal';
+  role: 'Leader' | 'Vice' | 'Substitute' | 'Independent' | 'Main' | 'Follower' | 'Normal' | 'Potential' | 'Dragon' | 'Observer';
   status: 'Watch' | 'Hold' | 'Sold';
   notes?: string;
   
@@ -108,9 +108,11 @@ export interface Stock {
   
   // Real-time Data
   currentPrice?: number;
+  avgPrice?: number;
   marketValue?: number; // Added for Fund Analysis
   turnoverAmount?: number; // Added for Fund Analysis
   turnover?: number; // Alias for turnoverAmount
+  amount?: number; // Upstream quote alias for turnover amount
   high?: number; // Added
   low?: number; // Added
   open?: number; // Added
@@ -118,13 +120,17 @@ export interface Stock {
   limitUpPrice?: number; // Added
   limitDownPrice?: number; // Added
   changePercent?: number;
+  sourceAsOf?: string;
   isLimitUp?: boolean;
   isLimitDown?: boolean;
   consecutiveLimitUps?: number; // 连板数 (New)
   volume?: number;
   volumeRatio?: number; // Added for Fund Analysis
+  volRatio?: number; // Legacy alias
   turnoverRate?: number;
   mainForceInflow?: number; // Main Force Net Inflow (Millions) - Hunter V5.0
+  lastUpdate?: string;
+  theme?: string;
   
   // Margin Trading Data (融资融券)
   marginData?: {
@@ -197,33 +203,7 @@ export interface Stock {
   
   // Advanced Analysis (v8+)
   history?: { day: string; open?: number; high?: number; low?: number; close: number; volume?: number }[];
-  technicals?: {
-      ma5: number;
-      ma10: number;
-      ma20: number;
-      ma60?: number;  // Quarterly Line
-      ma120?: number; // Half-Year Line
-      ma250?: number; // Year Line
-      atr?: number; // Added ATR (Volatility)
-      avgVol5: number;
-      turnoverMA5?: number; // Added for Predator Engine
-      recentLow?: number;
-      recentHigh?: number;
-      rsi?: { rsi6: number; rsi12: number; rsi24: number };
-      mfi?: number;
-      chipPressure?: number; // 筹码压力 (0-100, >50 means heavy resistance above)
-      chipSupport?: number;  // v41.0 New
-      profitRatio?: number;  // v41.0 New
-      alpha?: number;        // v59.0 Alpha Value (Excess Return)
-      atrBands?: {           // v41.0 New
-        upperResistance: number;
-        upperSupport: number;
-        lowerSupport: number;
-        lowerResistance: number;
-      };
-      macdDivergence?: 'bull' | 'bear' | null; // v41.0 New
-      rsiDivergence?: 'bull' | 'bear' | null;  // v41.0 New
-  };
+  technicals?: any;
   
   // Portfolio Management
   costPrice?: number;
@@ -234,8 +214,8 @@ export interface Stock {
   
   // Anti-Trap Logic
   trapSignals?: {
-      type: 'VolumeDivergence' | 'LateDayPull' | 'Exhaustion' | 'FakeBreakthrough' | 'Divergence';
-      severity: 'Low' | 'Medium' | 'High';
+      type: string;
+      severity: 'Low' | 'Medium' | 'High' | 'Critical';
       description: string;
   }[];
   
@@ -247,6 +227,7 @@ export interface Stock {
   premiumExpectation?: number; // 次日溢价预期 (%)
   moneyQualityScore?: number;  // 资金买入质量 (v27.0)
   sealIntensity?: number;      // 封单强度 (0-100) (v27.0)
+  sealQualityScore?: number;
   boardResilience?: number;    // 炸板回封韧性 (0-100) (v27.0)
   resonanceFactor?: number;    // 板块共振因子 (0-100) (v27.0)
   exhaustionSignal?: { isExhausted: boolean; reason: string }; // 动能衰减信号 (v27.0)
@@ -344,6 +325,8 @@ export interface MarketIndex {
   code: string;
   name: string;
   current: number;
+  currentPrice?: number;
+  price?: number;
   change: number;
   changePercent: number;
 }
@@ -362,13 +345,13 @@ export interface Fund {
   category: string;
   estimateNetValue: number;       // 估算净值
   estimateChangePercent: number; // 今日估算涨跌幅
-  dayChangePercent: number;      // 今日实际涨跌幅
-  yearChangePercent: number;     // 今年以来涨跌幅 (YTD)
+  dayChangePercent?: number;      // 今日实际涨跌幅
+  yearChangePercent?: number;     // 今年以来涨跌幅 (YTD)
   oneYearChangePercent?: number; // 近1年
   twoYearChangePercent?: number; // 近2年
   threeYearChangePercent?: number; // 近3年
   quarterChangePercent?: number; // 近1季 (Rolling 60 Days)
-  lastUpdate: string;
+  lastUpdate?: string;
 }
 
 export interface MarketMetrics {

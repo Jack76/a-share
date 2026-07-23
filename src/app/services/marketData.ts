@@ -62,6 +62,15 @@ export interface MarketStatsSnapshot {
   quality?: MarketStatsQuality;
 }
 
+export interface StockHistoryPoint {
+  day: string;
+  close: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  volume?: number;
+}
+
 const formatCode = (code: string): string => {
   if (!code) return '';
   const c = code.toLowerCase();
@@ -158,7 +167,7 @@ export const fetchRealTimeThemes = async (): Promise<Theme[]> => {
   }
 };
 
-export const fetchStockHistory = async (code: string, period: 'daily' | '1min' | '5min' | '30min' = 'daily'): Promise<{ day: string; close: number; open: number; high: number; low: number; volume: number }[]> => {
+export const fetchStockHistory = async (code: string, period: 'daily' | '1min' | '5min' | '30min' = 'daily'): Promise<StockHistoryPoint[]> => {
   if (!projectId || !code) return [];
   
   if (period === 'daily') {
@@ -222,7 +231,7 @@ export const fetchIntradayBatch = async (
   }
 };
 
-export const fetchStockHistoryBatch = async (codes: string[]): Promise<Record<string, { day: string; close: number; open: number; high: number; low: number; volume: number }[]>> => {
+export const fetchStockHistoryBatch = async (codes: string[]): Promise<Record<string, StockHistoryPoint[]>> => {
   if (!projectId || codes.length === 0) return {};
 
   // 0. Try Load from IndexedDB
@@ -288,7 +297,7 @@ export const fetchStockHistoryBatch = async (codes: string[]): Promise<Record<st
     chunks.push(finalMissing.slice(i, i + batchSize));
   }
 
-  const apiResults: Record<string, { day: string; close: number }[]> = {};
+  const apiResults: Record<string, StockHistoryPoint[]> = {};
   
   // 2. Max concurrency 3 (Improved wave strategy)
   const concurrency = 2;
@@ -481,11 +490,13 @@ export const fetchStockTicks = async (code: string): Promise<any[]> => {
   }
 };
 
-export const fetchFunds = async (codes: string[]): Promise<any[]> => {
+export const fetchFunds = async (codes: string[], forceRefresh = false): Promise<any[]> => {
   if (!projectId || codes.length === 0) return [];
 
-  // 1. Try Load from IndexedDB (Cache Strategy: 4 Hours)
-  let { results: localData, missing } = await getLocalFundsBatch(codes);
+  // 1. Use the short-lived cache for background loads; explicit refresh bypasses it.
+  let { results: localData, missing } = forceRefresh
+    ? { results: {} as Record<string, any>, missing: codes }
+    : await getLocalFundsBatch(codes);
 
   // V10.1 Cache Invalidation: Check if cache is legacy (missing 'ytdChangePercent')
   // If so, force re-fetch to correct the "Year vs YTD" mismatch
@@ -575,7 +586,7 @@ export const searchFundByKeyword = async (keyword: string): Promise<FundSearchRe
   }
 };
 
-export const fetchStockData = async (codes: string[]): Promise<{ data: Record<string, Partial<Stock>>, isMock: boolean }> => {
+export const fetchStockData = async (codes: string[], forceRefresh = false): Promise<{ data: Record<string, Partial<Stock>>, isMock: boolean }> => {
   if (codes.length === 0 || !projectId) return { data: {}, isMock: false };
 
   // v9.0 Optimization: Chunking for massive requests
@@ -595,7 +606,7 @@ export const fetchStockData = async (codes: string[]): Promise<{ data: Record<st
     const CONCURRENCY = 1;
     for (let i = 0; i < chunks.length; i += CONCURRENCY) {
       const wave = chunks.slice(i, i + CONCURRENCY);
-      const waveResults = await Promise.all(wave.map(chunk => fetchStockData(chunk)));
+      const waveResults = await Promise.all(wave.map(chunk => fetchStockData(chunk, forceRefresh)));
       waveResults.forEach(res => {
         Object.assign(results, res.data);
       });
@@ -612,7 +623,7 @@ export const fetchStockData = async (codes: string[]): Promise<{ data: Record<st
 
   // 1. Check Cache
   const cached = stockDataCache.get(cacheKey);
-  if (cached && (now - cached.timestamp < CACHE_TTL)) {
+  if (!forceRefresh && cached && (now - cached.timestamp < CACHE_TTL)) {
     return cached.data;
   }
 

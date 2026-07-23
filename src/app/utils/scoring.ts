@@ -1,4 +1,4 @@
-import { Stock, Theme, MarketIndex } from '../types';
+import { Stock, Theme, MarketIndex, type DailyMetrics, type MarketPhase, type SentimentPoint } from '../types';
 import { calculateAlphaDivergence } from './indicators';
 import { calculateExpectationGapV41, analyzeTrapRiskV41, generateAIPredictionV41 } from './algorithmV41';
 import { calculateTopConceptConsensus } from './marketConcepts';

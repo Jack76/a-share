@@ -86,7 +86,9 @@ export const EvolutionStreamPanel: React.FC = () => {
             }
         }
 
-        const historyMap = new Map(sentimentHistory.map(pt => [pt.time, pt]));
+        const historyMap = new Map<string, SentimentPoint>(
+            sentimentHistory.map(pt => [pt.time, pt]),
+        );
         
         let lastValidScore = sentimentHistory.length > 0 ? sentimentHistory[0].score : 50;
         let lastValidTemp = sentimentHistory.length > 0 ? sentimentHistory[0].temp : 50;
@@ -226,7 +228,6 @@ export const EvolutionStreamPanel: React.FC = () => {
                                 />
                                 <YAxis key="yaxis" hide domain={DOMAIN_0_100} />
                                 <Tooltip 
-                                    key="tooltip"
                                     contentStyle={TOOLTIP_CONTENT_STYLE}
                                     itemStyle={TOOLTIP_ITEM_STYLE}
                                     labelStyle={TOOLTIP_LABEL_STYLE}

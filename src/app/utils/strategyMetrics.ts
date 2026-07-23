@@ -8,6 +8,40 @@ export interface StrategyTradeObservation {
   regime?: MarketRegime;
 }
 
+export interface LifecycleTradeObservation extends StrategyTradeObservation {
+  entryTimestamp: number;
+}
+
+export const aggregateTradeLifecycles = (
+  trades: LifecycleTradeObservation[],
+): StrategyTradeObservation[] => {
+  const lifecycles = new Map<string, StrategyTradeObservation>();
+  trades.forEach(trade => {
+    const key = `${trade.entryTimestamp}:${trade.regime || 'UNKNOWN'}`;
+    const existing = lifecycles.get(key);
+    if (!existing) {
+      lifecycles.set(key, {
+        entryNotional: trade.entryNotional,
+        exitNotional: trade.exitNotional,
+        pnl: trade.pnl,
+        returnPercent: trade.returnPercent,
+        regime: trade.regime,
+      });
+      return;
+    }
+    const entryNotional = existing.entryNotional + trade.entryNotional;
+    const pnl = existing.pnl + trade.pnl;
+    lifecycles.set(key, {
+      entryNotional,
+      exitNotional: existing.exitNotional + trade.exitNotional,
+      pnl,
+      returnPercent: entryNotional > 0 ? (pnl / entryNotional) * 100 : 0,
+      regime: trade.regime,
+    });
+  });
+  return [...lifecycles.values()];
+};
+
 export interface EquityObservation {
   timestamp: number;
   equity: number;

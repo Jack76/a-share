@@ -10,12 +10,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Trash2, Plus, SquarePen, RefreshCw, Search, Sparkles, ArrowUpDown, ArrowUp, ArrowDown, Stethoscope, Zap, TriangleAlert, Rocket, Waves, Filter, X, Star, LayoutList, AlignJustify } from 'lucide-react';
 import { toast } from 'sonner';
 import { Stock } from '../../types';
-import { fetchStockData, searchStockByName, fetchStockHistoryBatch } from '../../services/marketData';
+import { fetchStockData, searchStockByName, fetchStockHistoryBatch, fetchMarketStats } from '../../services/marketData';
 
 import { StockDiagnosisDialog } from './StockDiagnosisDialog';
 import { SignalSystemGuide } from './SignalSystemGuide';
 import { calculateIndicators, TechnicalIndicators } from '../../utils/indicators';
-import { analyzeStockSignal } from '../../utils/predatorEngine';
 import { analyzeTrapRiskV41 } from '../../utils/trapGuardV41';
 import { Sparkline } from '../Sparkline';
 import { cn } from '../ui/utils';
@@ -79,29 +78,10 @@ const calculateNetInflow = (history: any[]) => {
     return Math.round((netFlow / totalWeight) / 1000000); 
 };
 
-// Simulated Data Source for Scanning
-// Expanded to cover 50+ Core Market Leaders for v42.1 Rigorous Mode
-const CORE_SAMPLES = [
-    // Tech / Semi
-    '601138', '002230', '300059', '600418', '000063', '600111', '002415', '603019', '002855', '600745',
-    '688981', '688041', '688012', '300308', '002475', '002371', '002049', '000099',
-    // Finance / Brokerage
-    '600030', '601166', '601066', '600999', '601990', '002736', '300059',
-    // High Speculation (Dragons)
-    '000625', '600519', '000858', '601888', '600570', '002241', '600460', '001696', '600879', '600118', 
-    '600501', '002855', '002466', '002195', '000656', '600733', '002085',
-    // New Concept Leaders
-    '002085', '002174', '002624', '000539', '000977', '603005', '002594',
-    // 算电协同 (Computing-Power-Electricity Synergy)
-    '002335', '002837', '600405', '300712', '002851', '300491', '000400', '002339',
-    // Oil & Gas / Energy Security
-    '601857', '600028', '600938', '601808', '600583', '002353', '002828', '603727', '300164', '600339'
-];
-
 // V65.0: analyzeIntradayStructure now runs in Store pipeline, DragonPool reads pre-computed stock.intradayIndicators
 
 export const DragonPool: React.FC = () => {
-  const { stocks, addStock, addStocks, updateStock, updateStocks, removeStock, refreshData, isMarketOpen, phase, forceRefreshHistory, marketIndices, marketThemes, indexTechnicals } = useTrading();
+  const { stocks, addStock, addStocks, updateStock, updateStocks, removeStock, refreshData, isMarketOpen, phase, forceRefreshHistory, analyzeLiveStockSignal } = useTrading();
   const processedRef = useRef<Set<string>>(new Set());
   const velocityTracker = useRef<Map<string, { price: number, time: number, velocity: number }>>(new Map());
 
@@ -110,7 +90,7 @@ export const DragonPool: React.FC = () => {
   // Root cause: useEffect[stocks] → updateStocks → new stocks ref → re-trigger → infinite.
   // Fix: (1) Interval polling with ref (no stocks dep), (2) correct {id,changes} format,
   //      (3) only process key stocks, (4) wider diff threshold (>3 not >1)
-  const velocityTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const velocityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stocksRefLocal = useRef(stocks);
   stocksRefLocal.current = stocks;
 
@@ -147,15 +127,6 @@ export const DragonPool: React.FC = () => {
           return; // First observation, skip analysis
         }
 
-        const shIndex = marketIndices.find(i => i.code.includes('sh000001'));
-        const indexChange = shIndex ? shIndex.changePercent : 0;
-        const myTheme = marketThemes.find(t => t.name === stock.concept);
-        const sectorContext = myTheme ? {
-          rank: marketThemes.indexOf(myTheme) + 1,
-          name: myTheme.name,
-          isMainline: myTheme.type === 'Main'
-        } : undefined;
-
         const intraday = stock.intradayIndicators;
         const microContext = {
           macdfs: (intraday?.macdfs?.signal || 'None') as 'GoldenCross' | 'DeadCross' | 'None',
@@ -166,11 +137,7 @@ export const DragonPool: React.FC = () => {
           isHeavyVolume: intraday?.volumeStructure?.isHeavy || false,
         };
 
-        const signal = analyzeStockSignal(stock, phase, {
-          indexChange,
-          isIndexBull: indexTechnicals?.isBull,
-          isIndexStrong: indexTechnicals?.isStrong
-        }, sectorContext, marketThemes, currentVelocity, microContext);
+        const signal = analyzeLiveStockSignal(stock, currentVelocity, microContext);
 
         const oldScore = stock.stargate?.score || 0;
         const newScore = signal.stargate?.score || 0;
@@ -272,15 +239,6 @@ export const DragonPool: React.FC = () => {
                       };
 
                       // V8.6 Context Integration
-                      const shIndex = marketIndices.find(i => i.code.includes('sh000001'));
-                      const indexChange = shIndex ? shIndex.changePercent : 0;
-                      const myTheme = marketThemes.find(t => t.name === tempStock.concept);
-                      const sectorContext = myTheme ? {
-                          rank: marketThemes.indexOf(myTheme) + 1,
-                          name: myTheme.name,
-                          isMainline: myTheme.type === 'Main'
-                      } : undefined;
-
                       // V65.0: Inject micro-context from intraday indicators
                       const _ind2 = tempStock.intradayIndicators;
                       const _mc2 = {
@@ -291,11 +249,7 @@ export const DragonPool: React.FC = () => {
                       };
                       const _hm2 = _mc2.macdfs !== 'None' || _mc2.volumeRatio !== undefined || _mc2.netInflow !== undefined;
 
-                      const signal = analyzeStockSignal(tempStock, phase, { 
-                          indexChange, 
-                          isIndexBull: indexTechnicals?.isBull,
-                          isIndexStrong: indexTechnicals?.isStrong
-                      }, sectorContext, marketThemes, undefined, _hm2 ? _mc2 : undefined);
+                      const signal = analyzeLiveStockSignal(tempStock, undefined, _hm2 ? _mc2 : undefined);
                       
                       const newPrediction = {
                           trend: signal.trend,
@@ -335,7 +289,7 @@ export const DragonPool: React.FC = () => {
       // Debounce slightly
       const timer = setTimeout(fetchFlow, 1000);
       return () => clearTimeout(timer);
-  }, [stocks, indexTechnicals]);
+  }, [stocks, analyzeLiveStockSignal]);
 
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -408,7 +362,7 @@ export const DragonPool: React.FC = () => {
     }
 
     // 4. Technical Structure (V7.0 Deep Dive)
-    const tech = stock.technicals as TechnicalIndicators || {};
+    const tech = (stock.technicals || {}) as Partial<TechnicalIndicators>;
     
     // A. Chip Pressure
     if (tech.chipPressure && tech.chipPressure > 80) score -= 15;
@@ -681,23 +635,32 @@ export const DragonPool: React.FC = () => {
   const handleScanAndAdd = async () => {
     setIsScanning(true);
     try {
-      // 1. Fetch data for core samples
-      const { data } = await fetchStockData(CORE_SAMPLES);
-      
-      // 2. Filter for potential dragons (Limit Up or > 5%)
-      const potentialDragons = Object.entries(data).filter(([code, stock]) => {
-        // Exclude if already in pool
-        if (stocks.some(s => s.code === code)) return false;
-        
-        // Criteria: Limit Up OR Change > 5%
-        const isStrong = (stock.isLimitUp || (stock.changePercent || 0) > 5.0);
-        return isStrong;
-      });
+      // Scan the verified full-market snapshot instead of a hand-picked sample.
+      const snapshot = await fetchMarketStats(true);
+      if (
+        !snapshot?.list ||
+        snapshot.list.length < 4_000 ||
+        !snapshot.quality ||
+        !["FRESH", "PARTIAL"].includes(snapshot.quality.status) ||
+        snapshot.quality.coverage < 0.85
+      ) {
+        throw new Error('全市场快照覆盖不足');
+      }
+      const potentialDragons = snapshot.list
+        .filter(stock => {
+          const code = String(stock.code || '').replace(/^(sh|sz|bj)/i, '');
+          // Exclude if already in pool
+          if (stocks.some(s => s.code.replace(/^(sh|sz|bj)/i, '') === code)) return false;
+          // Criteria: Limit Up OR Change > 5%
+          return stock.isLimitUp || (stock.changePercent || 0) > 5.0;
+        })
+        .sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0))
+        .slice(0, 100);
 
-      // 3. Add to pool
       const newStocksList: Stock[] = [];
       
-      potentialDragons.forEach(([code, stock]) => {
+      potentialDragons.forEach(stock => {
+         const code = String(stock.code).replace(/^(sh|sz|bj)/i, '');
          // Try to find concept from presets to replace generic 'Auto Scan'
          const matchedTheme = PRESET_THEMES.find(t => t.stocks.some(s => s.code.endsWith(code) || code.endsWith(s.code)));
          
@@ -716,9 +679,11 @@ export const DragonPool: React.FC = () => {
             currentPrice: stock.currentPrice,
             changePercent: stock.changePercent,
             isLimitUp: stock.isLimitUp,
+            sourceAsOf: snapshot.quality?.sourceAsOf || snapshot.quality?.asOf,
             
             // Hunter V5.0 Real Data Mapping
             turnoverRate: stock.turnoverRate || 0, // Use Real Turnover Rate from API
+            turnoverAmount: stock.amount || 0,
             mainForceInflow: 0, // Pending L2 Data Integration (Do not simulate)
             moneyQualityScore: stock.isLimitUp ? 90 : 60 + (stock.changePercent || 0), // Basic score based on Price
             trapRiskScore: 0, // Pending real risk model
@@ -925,15 +890,6 @@ export const DragonPool: React.FC = () => {
                         trapSignals: trapAnalysis.signals 
                     };
 
-                    const shIndex = marketIndices.find(i => i.code.includes('sh000001'));
-                    const indexChange = shIndex ? shIndex.changePercent : 0;
-                    const myTheme = marketThemes.find(t => t.name === tempStock.concept);
-                    const sectorContext = myTheme ? {
-                        rank: marketThemes.indexOf(myTheme) + 1,
-                        name: myTheme.name,
-                        isMainline: myTheme.type === 'Main'
-                    } : undefined;
-
                     const _ind3 = tempStock.intradayIndicators;
                     const _mc3 = {
                       macdfs: (_ind3?.macdfs?.signal || 'None') as 'GoldenCross' | 'DeadCross' | 'None',
@@ -943,7 +899,7 @@ export const DragonPool: React.FC = () => {
                     };
                     const _hm3 = _mc3.macdfs !== 'None' || _mc3.volumeRatio !== undefined || _mc3.netInflow !== undefined;
 
-                    const signal = analyzeStockSignal(tempStock, phase, { indexChange }, sectorContext, marketThemes, undefined, _hm3 ? _mc3 : undefined);
+                    const signal = analyzeLiveStockSignal(tempStock, undefined, _hm3 ? _mc3 : undefined);
                     
                     batchUpdates.push({
                         id: stock.id,

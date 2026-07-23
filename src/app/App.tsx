@@ -152,7 +152,9 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
             </div>
             <div className="space-y-1.5">
               {navItems.map(item => (
-                <NavItem key={item.id} id={item.id} label={item.label} icon={item.icon} />
+                <React.Fragment key={item.id}>
+                  <NavItem id={item.id} label={item.label} icon={item.icon} />
+                </React.Fragment>
               ))}
             </div>
           </div>

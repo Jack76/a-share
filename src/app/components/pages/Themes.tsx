@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Badge } from '../ui/badge';
 import { Trash2, Plus, TrendingUp, Zap, Radar, ArrowRight, GitBranch } from 'lucide-react';
-import { Theme } from '../../types';
+import { Stock, Theme } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../ui/utils';
 import { DragonGenealogy } from '../DragonGenealogy';

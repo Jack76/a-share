@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getChinaTradingClock, isChinaAuctionRelevant } from '../src/app/utils/marketClock.ts';
-import { calculateStrategyAcceptanceMetrics, evaluateStrategyAcceptance } from '../src/app/utils/strategyMetrics.ts';
+import {
+  aggregateTradeLifecycles,
+  calculateStrategyAcceptanceMetrics,
+  evaluateStrategyAcceptance,
+} from '../src/app/utils/strategyMetrics.ts';
 
 test('China market clock is deterministic across host timezones', () => {
   const clock = getChinaTradingClock('2026-07-23T01:30:00.000Z');
@@ -41,4 +45,40 @@ test('strategy acceptance metrics include drawdown, calibration and regime evide
   const acceptance = evaluateStrategyAcceptance(metrics);
   assert.equal(acceptance.passed, false);
   assert.equal(acceptance.checks.minimumTrades, false);
+});
+
+test('partial exits count as one lifecycle in acceptance metrics', () => {
+  const trades = aggregateTradeLifecycles([
+    {
+      entryTimestamp: 1,
+      exitTimestamp: 2,
+      entryPrice: 10,
+      exitPrice: 11,
+      shares: 500,
+      entryNotional: 5_000,
+      exitNotional: 5_500,
+      pnl: 500,
+      returnPercent: 10,
+      exitReason: 'SIGNAL',
+      regime: 'RISK_ON',
+    },
+    {
+      entryTimestamp: 1,
+      exitTimestamp: 3,
+      entryPrice: 10,
+      exitPrice: 12,
+      shares: 500,
+      entryNotional: 5_000,
+      exitNotional: 6_000,
+      pnl: 1_000,
+      returnPercent: 20,
+      exitReason: 'TARGET',
+      regime: 'RISK_ON',
+    },
+  ]);
+
+  assert.equal(trades.length, 1);
+  assert.equal(trades[0].entryNotional, 10_000);
+  assert.equal(trades[0].pnl, 1_500);
+  assert.equal(trades[0].returnPercent, 15);
 });

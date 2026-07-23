@@ -12,8 +12,8 @@ const MARKET_KEY = 'market_snapshot';
 // V66.5: History only changes once per trading day (close ~15:00 CN)
 // Use smart TTL: 20 hours covers overnight + next morning session
 const TTL = 20 * 60 * 60 * 1000; 
-// 4 Hours TTL for Fund Info (Semi-static, realtime estimates change intraday)
-const FUND_TTL = 4 * 60 * 60 * 1000;
+// Intraday fund estimates are decision inputs; keep the browser cache short.
+const FUND_TTL = 2 * 60 * 1000;
 // v7.9: Reduce Market Snapshot TTL to 10s for more responsive updates
 const MARKET_TTL = 10 * 1000;
 

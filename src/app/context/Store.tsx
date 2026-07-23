@@ -1,8 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Stock, Theme, MarketIndex, DailyMetrics, MarketPhase, PoolItem, MarketEvent } from '../types';
+import { Stock, Theme, MarketIndex, DailyMetrics, MarketPhase, MarketEvent } from '../types';
 import { 
-    calculateStrengthScore, 
-    scoreToConcept, 
     calculateResonance, 
     analyzeThemes, 
     calculatePremiumExpectation, 
@@ -441,7 +439,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   const isRefreshing = useRef(false);
-  const saveDebounceTimer = useRef<NodeJS.Timeout | null>(null);
+  const saveDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSavePayload = useRef<any>({});
   const MAX_SAVE_RETRIES = 2;
 
@@ -482,7 +480,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             // v10.4 Optimization: Filter out auto-discovered stocks to prevent payload bloat
             const persistentStocks = payload.stocks.filter((s: Stock) => {
                 const isAuto = s.tags?.includes('Auto-Discovered');
-                const isImportant = s.status === 'Hold' || s.status === 'Buy';
+                const isImportant = s.status === 'Hold' || (s.status as string) === 'Buy';
                 return !(isAuto && !isImportant);
             });
 
@@ -979,7 +977,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           // v7.7 性能优化：优先从全市场快照 (marketStats.list) 中更新自选股数据
           // 这免了额外的 /market/stocks 请求，且确保数据 100% 同步
           const marketList = marketStats?.list || [];
-          const marketMap = new Map(marketList.map(s => [s.code, s]));
+          const marketMap = new Map<string, Partial<Stock>>(
+            marketList.map((stock: Partial<Stock> & { code: string }) => [stock.code, stock]),
+          );
 
           const heldStocks = currentStocks.filter(stock => stock.status === 'Hold');
           const rotatingStocks = currentStocks.filter(stock =>
@@ -1465,7 +1465,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const addStocks = (list: Stock[]) => { 
       // Merge list into stocks, promoting duplicates
-      const stockMap = new Map(stocks.map(s => [s.code, s]));
+      const stockMap = new Map<string, Stock>(stocks.map(s => [s.code, s]));
       
       list.forEach(s => {
           const existing = stockMap.get(s.code);

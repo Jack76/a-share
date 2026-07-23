@@ -79,6 +79,14 @@ const safeError = (c: any, e: any) => {
     return c.json({ error: e.message }, 500);
 };
 
+const parseTencentQuoteTimestamp = (value: unknown) => {
+    const raw = String(value || "");
+    if (!/^\d{14}$/.test(raw)) return undefined;
+    const iso = `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}T${raw.slice(8, 10)}:${raw.slice(10, 12)}:${raw.slice(12, 14)}+08:00`;
+    const timestamp = Date.parse(iso);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+};
+
 const app = new Hono();
 
 // Global error handler for uncaught promise rejections (Deno specific)
@@ -236,67 +244,17 @@ api.post("/data", async (c) => {
   }
 });
 
-// Specific endpoint for managing Custom Funds (Lighter weight)
-api.get("/user/funds", async (c) => {
-    try {
-        const funds = await kv.get("trading:customFunds");
-        try {
-            return c.json({ funds: funds || [] });
-        } catch (e) {
-            return new Response(null, { status: 499 });
-        }
-    } catch (e) {
-        return c.json({ funds: [] });
-    }
-});
-
-api.post("/user/funds", async (c) => {
-    try {
-        const { funds } = await c.req.json();
-        if (Array.isArray(funds)) {
-            await safeKvSet("trading:customFunds", funds);
-            try {
-                return c.json({ status: "success" });
-            } catch (e) {
-                return new Response(null, { status: 499 });
-            }
-        }
-        return c.json({ error: "Invalid format" }, 400);
-    } catch (e) {
-        return safeError(c, e);
-    }
-});
-
-// V66.0: Fund Holdings Management (Portfolio Tracking)
-api.get("/user/fund-holdings", async (c) => {
-    try {
-        const holdings = await kv.get("trading:fundHoldings");
-        try {
-            return c.json({ holdings: holdings || [] });
-        } catch (e) {
-            return new Response(null, { status: 499 });
-        }
-    } catch (e) {
-        return c.json({ holdings: [] });
-    }
-});
-
-api.post("/user/fund-holdings", async (c) => {
-    try {
-        const { holdings } = await c.req.json();
-        if (Array.isArray(holdings)) {
-            await safeKvSet("trading:fundHoldings", holdings);
-            try {
-                return c.json({ status: "success" });
-            } catch (e) {
-                return new Response(null, { status: 499 });
-            }
-        }
-        return c.json({ error: "Invalid format" }, 400);
-    } catch (e) {
-        return safeError(c, e);
-    }
-});
+// Personal fund state is intentionally device-local. The earlier implementation
+// stored every visitor's portfolio under shared KV keys, allowing cross-user
+// reads and overwrites on a public site. Keep the legacy routes explicitly
+// closed so old clients fail safely instead of recreating a shared tenant.
+const retiredPersonalFundState = (c: any) => c.json({
+  error: "Personal fund state is stored on the current device only",
+}, 410);
+api.get("/user/funds", retiredPersonalFundState);
+api.post("/user/funds", retiredPersonalFundState);
+api.get("/user/fund-holdings", retiredPersonalFundState);
+api.post("/user/fund-holdings", retiredPersonalFundState);
 
 let marketThemesCache: { themes: any[]; storedAt: number } | null = null;
 const MARKET_THEMES_CACHE_TTL_MS = 30_000;
@@ -515,7 +473,8 @@ api.get("/market/themes", async (c) => {
                                   limitDownPrice: limitState.limitDownPrice,
                                   isLimitUp: limitState.isLimitUp,
                                   isLimitDown: limitState.isLimitDown,
-                                  lastUpdate: new Date().toLocaleTimeString(),
+                                  lastUpdate: data[30],
+                                  sourceAsOf: parseTencentQuoteTimestamp(data[30]),
                                   mainMoneyIn: 0, // Default
                                   // V18.0: Real-time Order Book & Flow for Decoy Analysis
                                   buyVolume: parseFloat(data[7]),   // Active Buy (Outer)
@@ -627,7 +586,7 @@ api.get("/market/themes", async (c) => {
 
 // Proxy to fetch Market Indices
 api.get("/market/indices", async (c) => {
-  const indices = ['sh000001', 'sz399001', 'sz399006'];
+  const indices = ['sh000001', 'sh000300', 'sh000905', 'sh000852', 'sz399001', 'sz399006', 'sh000688'];
   
   // Helper to decode GBK safely
   const decodeGBK = async (resp: Response) => {
@@ -1802,8 +1761,8 @@ api.get("/market/fund-history", async (c) => {
   const fetchFundHistory = async (code: string) => {
     try {
       // V8.3 Upgrade: Use PingZhong Data (Static JS) which is more reliable than the dynamic API
-      // Source: http://fund.eastmoney.com/pingzhongdata/${code}.js
-      const url = `http://fund.eastmoney.com/pingzhongdata/${code}.js?t=${Date.now()}`;
+      // Source: https://fund.eastmoney.com/pingzhongdata/${code}.js
+      const url = `https://fund.eastmoney.com/pingzhongdata/${code}.js?t=${Date.now()}`;
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
@@ -1811,7 +1770,7 @@ api.get("/market/fund-history", async (c) => {
       const resp = await fetch(url, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Referer": "http://fund.eastmoney.com/",
+          "Referer": "https://fund.eastmoney.com/",
           "Accept": "*/*"
         },
         signal: controller.signal

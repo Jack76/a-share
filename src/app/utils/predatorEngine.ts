@@ -1043,11 +1043,7 @@ export const analyzeStockSignal = (
           // 趋势破位，资金流入可能是主力自救或被动挂单成交，极度危险
           score -= 20; 
           adviceText += " [破位接飞刀风险]";
-          // 如果此时处于下跌趋势，强制转为观望
-          if (signalType === "BUY") {
-              signalType = "WAIT";
-              signalTitle = "观望 (WAIT)";
-          }
+          // 此分支进入时信号已经不是买入，继续保持防守。
       }
     }
     // 如果股价涨但主力大举出逃 -> 空涨
@@ -1092,10 +1088,8 @@ export const analyzeStockSignal = (
     else if (intent === "Accumulate" && decoyScore > 60) {
       score += 30;
       prob += 20;
-      if (signalType !== "BUY") {
-        signalType = "BUY"; // 逆转信号
-        signalTitle = "博弈 (GAMBLE)";
-      }
+      signalType = "BUY"; // 逆转信号
+      signalTitle = "博弈 (GAMBLE)";
       adviceText += ` [主力压盘吸筹，建议跟随]`;
     }
     // C. 中性但有算法理由
@@ -3211,7 +3205,7 @@ export const analyzeStockSignal = (
     }
     
     // ── V60.2: 回测负期望值警告 ──
-    if (backtestResult && backtestResult.expectancy < -0.5 && urgency !== 'NO_ENTRY') {
+    if (backtestResult && backtestResult.expectancy < -0.5) {
       // 历史上这种信号期望值为负 → 降为最低紧迫度
       if (urgency === 'NOW') urgency = 'WAIT_DIP';
       method += ` [回测期望${backtestResult.expectancy.toFixed(1)}%·历史负期望]`;

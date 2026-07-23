@@ -94,7 +94,7 @@ export const VolumeProfileChart: React.FC<Props> = ({ stock }) => {
                                 return (
                                     <div className="bg-slate-900 text-white p-2 rounded shadow-xl border border-slate-800">
                                         <p className="text-[10px] font-black">Price: ¥{payload[0].payload.price}</p>
-                                        <p className="text-[9px] font-medium text-slate-400">Chip Conc: {payload[0].value.toFixed(0)}%</p>
+                                        <p className="text-[9px] font-medium text-slate-400">Chip Conc: {Number(payload[0].value || 0).toFixed(0)}%</p>
                                     </div>
                                 );
                             }

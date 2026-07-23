@@ -193,7 +193,6 @@ export const TimeSharingDivergence: React.FC<Props> = ({ stock, height = 300 }) 
                 <YAxis key="tsd-yaxis-left" yAxisId="left" domain={priceDomain} hide />
                 <YAxis key="tsd-yaxis-right" yAxisId="right" domain={TSD_DOMAIN_SENTIMENT} hide />
                 <Tooltip 
-                  key="tsd-tooltip"
                   formatter={TSD_TOOLTIP_FORMATTER}
                   contentStyle={TSD_TOOLTIP_CONTENT_STYLE}
                 />

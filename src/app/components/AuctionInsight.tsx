@@ -263,7 +263,7 @@ export const AuctionInsight: React.FC<{ stocks?: Stock[] }> = ({ stocks: propSto
           <div className="p-4 border-t border-slate-100">
             <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">板块竞价热度</div>
             <div className="flex flex-wrap gap-1.5">
-              {Object.entries(result.themeAuctionMap)
+              {(Object.entries(result.themeAuctionMap) as Array<[string, (typeof result.themeAuctionMap)[string]]>)
                 .sort((a, b) => b[1].avgOpenGap - a[1].avgOpenGap)
                 .slice(0, 8)
                 .map(([name, data]) => (

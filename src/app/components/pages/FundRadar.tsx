@@ -11,14 +11,22 @@ import {
   searchFundByKeyword,
   type FundSearchResult,
 } from "../../services/marketData";
-import {
-  projectId,
-  publicAnonKey,
-} from "../../../../utils/supabase/info";
 import { Fund } from "../../types";
 import {
   calculateIndicators,
 } from "../../utils/indicators";
+import {
+  evaluateFundDataFreshness,
+  predictFundPriceAction,
+  resolveFundBenchmark,
+  type FundDataStatus,
+  type FundTrendPrediction,
+} from "../../utils/fundStrategy";
+import {
+  alignFundComparisonSeries,
+  buildActualPortfolioCurve,
+  type FundNavPoint,
+} from "../../utils/fundPortfolio";
 import {
   AreaChart,
   Area,
@@ -104,13 +112,7 @@ import { toast } from "sonner";
 
 // ===================== DATA STRUCTURES =====================
 
-interface SmartPrediction {
-  targetHigh: number;
-  targetLow: number;
-  trendStrength: number;
-  confidence: number;
-  direction: "Bull" | "Bear" | "Neutral";
-}
+type SmartPrediction = FundTrendPrediction;
 
 interface InstitutionalTrace {
   inflowScore: number;
@@ -126,6 +128,11 @@ interface ExtendedFund extends Fund {
   mfi: number;
   atr: number;
   isEtf: boolean;
+  historyData: FundNavPoint[];
+  sourceAsOf?: string | number;
+  dataStatus: FundDataStatus;
+  dataAgeMs: number | null;
+  benchmarkName?: string;
   halfYearChangePercent?: number;
   yearChangePercent?: number;
   quarterChangePercent?: number;
@@ -174,6 +181,7 @@ interface FundHolding {
 
 interface MarketContext {
   marketChange: number;
+  benchmarkAvailable: boolean;
   csi300Change: number;
   marketYtd: number;
   marketVolatility: number;
@@ -329,40 +337,27 @@ const inferCategory = (name: string, fundType?: string, indexName?: string): str
   return "其他";
 };
 
-const WATCHED_INDICES = ["sh000001", "sh000300", "sz399006", "sh000688"];
+const WATCHED_INDICES = ["sh000001", "sh000300", "sh000905", "sh000852", "sz399006", "sh000688"];
 const INDEX_NAMES: Record<string, string> = {
-  "sh000001": "上证", "sh000300": "沪深300", "sz399006": "创业板", "sh000688": "科创50",
+  "sh000001": "上证",
+  "sh000300": "沪深300",
+  "sh000905": "中证500",
+  "sh000852": "中证1000",
+  "sz399006": "创业板",
+  "sh000688": "科创50",
 };
 
 const isTradeableETF = (code: string) => /^(5[167890]|159|16)/.test(code);
 
-/**
- * V66.4: A/C类去重 —— 同名基金只保留C类（费率更低适合短持）
- * 匹配规则：名称仅末尾 A/B/C/D/E 不同的视为同一基金
- */
-const deduplicateAC = <T extends { code: string; name: string }>(funds: T[]): T[] => {
-  const getBaseName = (name: string): string =>
-    name.replace(/[A-E]$/, "").replace(/（[A-E]）$/, "").trim();
-
-  const groups = new Map<string, T[]>();
-  for (const f of funds) {
-    const base = getBaseName(f.name);
-    const arr = groups.get(base) || [];
-    arr.push(f);
-    groups.set(base, arr);
-  }
-
-  const result: T[] = [];
-  for (const [, group] of groups) {
-    if (group.length <= 1) { result.push(...group); continue; }
-    // 优先C类，其次保留第一个
-    const cClass = group.find(f => /C$/.test(f.name) || /（C）$/.test(f.name));
-    result.push(cClass || group[0]);
-  }
-  return result;
-};
-
 // ===================== HELPERS =====================
+
+const formatDataAge = (ageMs: number | null) => {
+  if (ageMs === null) return "时间未知";
+  if (ageMs < 60_000) return "1分钟内";
+  if (ageMs < 3_600_000) return `${Math.floor(ageMs / 60_000)}分钟前`;
+  if (ageMs < 86_400_000) return `${Math.floor(ageMs / 3_600_000)}小时前`;
+  return `${Math.floor(ageMs / 86_400_000)}天前`;
+};
 
 /** Recalculate weighted avg cost & net shares from transaction list */
 const recalcHolding = (h: FundHolding): FundHolding => {
@@ -372,16 +367,19 @@ const recalcHolding = (h: FundHolding): FundHolding => {
   let realizedPnL = 0;
   let avgCost = h.costPerUnit;
 
-  for (const tx of h.transactions.sort((a, b) => a.date.localeCompare(b.date))) {
+  for (const tx of [...h.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
+    const validShares = Number.isFinite(tx.shares) ? Math.max(0, tx.shares) : 0;
+    const validPrice = Number.isFinite(tx.pricePerUnit) ? Math.max(0, tx.pricePerUnit) : 0;
     if (tx.type === "buy") {
-      totalCost += tx.pricePerUnit * tx.shares;
-      totalShares += tx.shares;
+      totalCost += validPrice * validShares;
+      totalShares += validShares;
       avgCost = totalShares > 0 ? totalCost / totalShares : 0;
     } else {
       // sell: realize PnL at avg cost
-      const pnl = (tx.pricePerUnit - avgCost) * tx.shares;
+      const sharesSold = Math.min(totalShares, validShares);
+      const pnl = (validPrice - avgCost) * sharesSold;
       realizedPnL += pnl;
-      totalShares -= tx.shares;
+      totalShares -= sharesSold;
       totalCost = avgCost * totalShares;
     }
   }
@@ -439,26 +437,6 @@ const TagSelector: React.FC<{
 
 // ===================== ALGORITHM CORE =====================
 
-const predictPriceAction = (
-  history: { close: number; high: number; low: number }[],
-  currentPrice: number, atr: number, lookbackDays = 10,
-): SmartPrediction => {
-  if (history.length < lookbackDays) {
-    return { targetHigh: currentPrice * 1.05, targetLow: currentPrice * 0.95, trendStrength: 50, confidence: 0, direction: "Neutral" };
-  }
-  const n = lookbackDays;
-  const recent = history.slice(-n);
-  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-  recent.forEach((h, i) => { sumX += i; sumY += h.close; sumXY += i * h.close; sumXX += i * i; });
-  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-  const slopePct = slope / currentPrice;
-  const trendStrength = Math.min(100, Math.max(0, 50 + slopePct * 5000));
-  const direction = slopePct > 0.001 ? "Bull" : slopePct < -0.001 ? "Bear" : "Neutral";
-  const recentAtr = recent.reduce((acc, cur) => acc + (cur.high - cur.low), 0) / n;
-  const confidence = atr > 0 ? Math.min(100, (recentAtr / atr) * 50 + 25) : 50;
-  return { targetHigh: currentPrice + atr * 1.5 + slope * 3, targetLow: currentPrice - atr * 1.5 + slope * 3, trendStrength, confidence, direction };
-};
-
 /** V66.6: Calculate max drawdown from peak to trough (recent 120 bars) */
 const calcMaxDrawdown = (hist: { close: number }[]): number => {
   if (hist.length < 2) return 0;
@@ -486,9 +464,9 @@ const calculatePredatorScore = (fund: ExtendedFund, context: MarketContext, acti
   const alpha = daily - marketChange;
 
   // --- 1. Alpha (excess daily return vs market) — smooth curve ---
-  if (fund.isEtf) {
+  if (context.benchmarkAvailable && fund.isEtf) {
     score += smoothScore(alpha, 0, 1.5, 15); // ±3% alpha → ±15pts
-  } else {
+  } else if (context.benchmarkAvailable) {
     score += smoothScore(alpha, 0, 2, 8); // ±4% alpha → ±8pts
     if ((fund.yearChangePercent || 0) > 10) score += 5;
     if ((fund.quarterChangePercent || 0) > 5) score += 3;
@@ -541,6 +519,20 @@ const generatePredatorStrategy = (fund: ExtendedFund, score: number): { signal: 
   let guidance: ExtendedFund["guidance"] = { title: "保持观望", action: "Wait", position: "0%", reason: "趋势不明朗，建议等待方向确认。", riskLevel: "Low" };
   const isOtcChasing = !isEtf && daily > 3.0; // V66.6: Relaxed from 2.5→3.0
 
+  if (fund.dataStatus !== "FRESH") {
+    signal = { action: "观望", color: "text-slate-500", desc: "数据过期或缺失", tag: "Sleep" };
+    guidance = {
+      title: "等待数据更新",
+      action: "Wait",
+      position: "不新增仓位",
+      reason: fund.dataStatus === "STALE"
+        ? "当前基金行情已过期，暂停生成交易建议。"
+        : "无法确认行情数据时间，暂停生成交易建议。",
+      riskLevel: "High",
+    };
+    return { signal, guidance };
+  }
+
   // ==== SELL SIGNALS (highest priority — protect capital first) ====
 
   // 止损: Score critically low
@@ -573,6 +565,18 @@ const generatePredatorStrategy = (fund: ExtendedFund, score: number): { signal: 
   }
 
   // ==== BUY SIGNALS ====
+
+  if (prediction.evidenceReliability === "LOW") {
+    signal = { action: "观望", color: "text-slate-500", desc: "样本外证据不足", tag: "Sleep" };
+    guidance = {
+      title: "等待验证",
+      action: "Wait",
+      position: "不新增仓位",
+      reason: `当前仅有 ${prediction.sampleSize} 个滚动验证样本，不足以支持买入建议。`,
+      riskLevel: "Medium",
+    };
+    return { signal, guidance };
+  }
 
   // 主升浪: Strong score + bullish trend
   if (score > 78 && prediction.direction === "Bull" && !isOtcChasing) {
@@ -1094,7 +1098,7 @@ const PortfolioInsights: React.FC<{
   const { winRate, best, worst, bestToday, worstToday, maxPct, maxHolding, signalDist, avgDays } = insights;
 
   const signalColors: Record<string, string> = { Alpha: "bg-red-500", Beta: "bg-blue-500", Danger: "bg-orange-500", Sleep: "bg-slate-300" };
-  const signalTotal = Object.values(signalDist).reduce((s, v) => s + v, 0);
+  const signalTotal = (Object.values(signalDist) as number[]).reduce((s, v) => s + v, 0);
 
   return (
     <div className="space-y-3">
@@ -1357,42 +1361,17 @@ const PortfolioEquityCurve: React.FC<{
 }> = React.memo(({ holdings, fundMap }) => {
   const chartData = useMemo(() => {
     if (holdings.length === 0) return [];
-
-    // Collect all funds with trendData and compute weights
-    const items: { weight: number; data: { date: string; value: number }[] }[] = [];
-    let totalValue = 0;
-
-    holdings.forEach(h => {
-      const fund = fundMap.get(h.code);
-      if (!fund || fund.trendData.length < 5) return;
-      const nav = fund.estimateNetValue || h.costPerUnit;
-      const val = nav * h.shares;
-      totalValue += val;
-      items.push({ weight: val, data: fund.trendData });
+    const navByCode = new Map<string, FundNavPoint[]>();
+    holdings.forEach(holding => {
+      const fund = fundMap.get(holding.code);
+      if (fund?.historyData.length) navByCode.set(holding.code, fund.historyData);
     });
-
-    if (items.length === 0 || totalValue === 0) return [];
-
-    // Normalize weights
-    items.forEach(it => it.weight /= totalValue);
-
-    // Use shortest common date range
-    const minLen = Math.min(...items.map(it => it.data.length));
-    if (minLen < 5) return [];
-
-    // Build composite curve
-    const composite: { date: string; portfolio: number; benchmark?: number }[] = [];
-    for (let i = 0; i < minLen; i++) {
-      let weightedReturn = 0;
-      items.forEach(it => {
-        const d = it.data[it.data.length - minLen + i];
-        weightedReturn += (d?.value || 0) * it.weight;
-      });
-      const date = items[0].data[items[0].data.length - minLen + i]?.date || "";
-      composite.push({ date, portfolio: +weightedReturn.toFixed(2) });
-    }
-
-    return composite;
+    return buildActualPortfolioCurve(holdings, navByCode)
+      .slice(-250)
+      .map(point => ({
+        date: point.date,
+        portfolio: Number(point.returnPercent.toFixed(2)),
+      }));
   }, [holdings, fundMap]);
 
   if (chartData.length < 5) return null;
@@ -1428,7 +1407,7 @@ const PortfolioEquityCurve: React.FC<{
                 tickFormatter={(d: string) => { if (!d) return ""; const p = d.split("-"); return p.length >= 3 ? `${parseInt(p[1])}/${parseInt(p[2])}` : d; }}
                 interval="preserveStartEnd" minTickGap={40}
               />
-              <ReTooltip key="tooltip"
+              <ReTooltip
                 contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px" }}
                 formatter={(val: number) => [`${val.toFixed(2)}%`, "组合收益"]}
                 labelFormatter={(label: any) => {
@@ -1442,7 +1421,7 @@ const PortfolioEquityCurve: React.FC<{
             </AreaChart>
           </ResponsiveContainer>
         </div>
-        <div className="text-[10px] text-slate-400 mt-1 text-center">基于持仓比例加权，近1年累计收益率</div>
+        <div className="text-[10px] text-slate-400 mt-1 text-center">按实际交易日期、份额与历史净值计算</div>
       </CardContent>
     </Card>
   );
@@ -1471,7 +1450,7 @@ const DCASimulatorDialog: React.FC<{
   const selectedFund = useMemo(() => funds.find(f => f.code === selectedCode), [funds, selectedCode]);
 
   const runSimulation = useCallback(() => {
-    if (!selectedFund || selectedFund.trendData.length < 10) {
+    if (!selectedFund || selectedFund.historyData.length < 30) {
       toast.error("该基金历史数据不足，无法模拟");
       return;
     }
@@ -1479,13 +1458,8 @@ const DCASimulatorDialog: React.FC<{
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) { toast.error("请输入有效金额"); return; }
 
-    const data = selectedFund.trendData;
-    // Convert trendData (cumulative %) back to approximate NAV series
-    // trendData.value = cumulative % change from start
-    // We'll use a base of 1.0 and derive NAV
-    const navSeries = data.map(d => ({ date: d.date, nav: 1 + d.value / 100 }));
-
-    const step = frequency === "weekly" ? 1 : frequency === "biweekly" ? 2 : 4;
+    const navSeries = selectedFund.historyData;
+    const step = frequency === "weekly" ? 5 : frequency === "biweekly" ? 10 : 21;
     let totalInvested = 0;
     let totalShares = 0;
     let periods = 0;
@@ -1538,7 +1512,7 @@ const DCASimulatorDialog: React.FC<{
               className="w-full h-9 px-3 rounded-md border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">请选择...</option>
-              {funds.filter(f => f.trendData.length > 10).map(f => (
+              {funds.filter(f => f.historyData.length >= 30).map(f => (
                 <option key={f.code} value={f.code}>{f.name} ({f.code})</option>
               ))}
             </select>
@@ -1717,7 +1691,7 @@ const RebalanceAdvisor: React.FC<{
     // 3. Sector concentration
     const sectorAlloc: Record<string, number> = {};
     holdingMetrics.forEach(h => {
-      const cat = h.fund?.category || "���他";
+      const cat = h.fund?.category || "其他";
       sectorAlloc[cat] = (sectorAlloc[cat] || 0) + h.val;
     });
     const sectorEntries = Object.entries(sectorAlloc).sort((a, b) => b[1] - a[1]);
@@ -1737,7 +1711,7 @@ const RebalanceAdvisor: React.FC<{
 
     // 4. Missing strong sectors
     const strongAlphaFunds = allFunds.filter(f => f.signal?.tag === "Alpha" && f.score > 75 && !holdingMetrics.some(h => h.code === f.code));
-    const strongCategories = [...new Set(strongAlphaFunds.map(f => f.category))];
+    const strongCategories = [...new Set<string>(strongAlphaFunds.map(f => f.category))];
     const missingStrong = strongCategories.filter(c => !sectorAlloc[c]);
     if (missingStrong.length > 0) {
       const topMissing = missingStrong[0];
@@ -1919,49 +1893,18 @@ const PnLCalendarHeatmap: React.FC<{
   const calendarData = useMemo(() => {
     if (holdings.length === 0) return { cells: [], maxAbs: 0, monthLabels: [] as { label: string; col: number }[] };
 
-    // V67.5: Interpolate trendData (sampled every ~5 trading days) into daily returns
-    // trendData: { date, value } where value = cumulative % change from start
-    // Strategy: for each consecutive pair, compute period return and distribute
-    // evenly across all calendar days in between (linear interpolation)
-    const dailyReturns: Record<string, number> = {};
-    let totalWeight = 0;
-
-    holdings.forEach(h => {
-      const fund = fundMap.get(h.code);
-      if (!fund || fund.trendData.length < 10) return;
-      const nav = fund.estimateNetValue || h.costPerUnit;
-      const weight = nav * h.shares;
-      totalWeight += weight;
-
-      const td = fund.trendData;
-      for (let i = 1; i < td.length; i++) {
-        const periodReturn = td[i].value - td[i - 1].value;
-        // Enumerate weekdays (Mon-Fri) between two data points
-        const d0 = new Date(td[i - 1].date);
-        const d1 = new Date(td[i].date);
-        const calDays = Math.max(1, Math.round((d1.getTime() - d0.getTime()) / 86400000));
-        // Collect weekday dates in range (d0, d1]
-        const weekdayDates: string[] = [];
-        const cursor = new Date(d0);
-        for (let j = 0; j < calDays; j++) {
-          cursor.setDate(cursor.getDate() + 1);
-          const dow = cursor.getDay();
-          if (dow >= 1 && dow <= 5) { // Mon-Fri only
-            weekdayDates.push(cursor.toISOString().slice(0, 10));
-          }
-        }
-        const tradingDays = Math.max(1, weekdayDates.length);
-        const dailySlice = periodReturn / tradingDays;
-        for (const dateStr of weekdayDates) {
-          dailyReturns[dateStr] = (dailyReturns[dateStr] || 0) + dailySlice * weight;
-        }
-      }
+    const navByCode = new Map<string, FundNavPoint[]>();
+    holdings.forEach(holding => {
+      const fund = fundMap.get(holding.code);
+      if (fund?.historyData.length) navByCode.set(holding.code, fund.historyData);
     });
-
-    if (totalWeight === 0) return { cells: [], maxAbs: 0, monthLabels: [] as { label: string; col: number }[] };
-
-    // Normalize by total weight
-    Object.keys(dailyReturns).forEach(d => { dailyReturns[d] /= totalWeight; });
+    const actualCurve = buildActualPortfolioCurve(holdings, navByCode);
+    if (actualCurve.length === 0) {
+      return { cells: [], maxAbs: 0, monthLabels: [] as { label: string; col: number }[] };
+    }
+    const dailyReturns = Object.fromEntries(
+      actualCurve.map(point => [point.date, point.dailyChangePercent]),
+    ) as Record<string, number>;
 
     // Build last ~90 days of calendar cells
     const now = new Date();
@@ -2187,17 +2130,13 @@ const CompareDialog: React.FC<{
   // Build overlaid chart data from each fund's trendData (must be before early return)
   const chartData = useMemo(() => {
     if (funds.length === 0) return [];
-    // Find the shortest data length (common date range)
-    const minLen = Math.min(...funds.map(f => f.trendData.length));
-    if (minLen < 3) return [];
-
-    // Normalize all to same date grid (use the first fund's dates)
-    const baseDates = funds[0].trendData.slice(-minLen);
-    return baseDates.map((pt, i) => {
-      const row: Record<string, any> = { date: pt.date };
-      funds.forEach((f, fi) => {
-        const td = f.trendData.slice(-minLen);
-        row[`fund${fi}`] = td[i]?.value ?? 0;
+    const aligned = alignFundComparisonSeries(
+      funds.map(fund => ({ code: fund.code, history: fund.historyData })),
+    ).slice(-250);
+    return aligned.map(point => {
+      const row: Record<string, string | number> = { date: point.date };
+      funds.forEach((fund, index) => {
+        if (typeof point[fund.code] === "number") row[`fund${index}`] = point[fund.code];
       });
       return row;
     });
@@ -2236,7 +2175,7 @@ const CompareDialog: React.FC<{
                   <LineChart data={chartData}>
                     <XAxis key="x" dataKey="date" hide />
                     <YAxis key="y" tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fontSize: 10 }} width={40} />
-                    <ReTooltip key="tooltip"
+                    <ReTooltip
                       contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid #e2e8f0" }}
                       formatter={(val: number, name: string) => {
                         const idx = parseInt(name.replace("fund", ""));
@@ -2346,6 +2285,18 @@ const FundCard: React.FC<{
             <Badge variant="outline" className={cn("text-[9px] h-4 px-1 border-0", fund.isEtf ? "bg-blue-50 text-blue-600" : "bg-purple-50 text-purple-600")}>
               {fund.isEtf ? "ETF" : "OTC"}
             </Badge>
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-[9px] h-4 px-1 border-0",
+                fund.dataStatus === "FRESH"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-amber-50 text-amber-700",
+              )}
+              title={`源数据：${formatDataAge(fund.dataAgeMs)}`}
+            >
+              {fund.dataStatus === "FRESH" ? "数据新鲜" : fund.dataStatus === "STALE" ? "数据过期" : "时间未知"}
+            </Badge>
             {isHeld && <Badge className="text-[9px] h-4 px-1 bg-amber-50 text-amber-600 border-amber-200">持仓</Badge>}
           </div>
           <div className="flex flex-col items-end gap-0.5" onClick={e => { e.stopPropagation(); onSignalClick?.(fund.signal.action); }}>
@@ -2397,7 +2348,13 @@ const FundCard: React.FC<{
 
       {/* Actions */}
       <div className="px-4 pb-3 flex items-center justify-between border-t border-slate-50 pt-2">
-        <Badge variant="outline" className="text-[9px] h-4 px-1 text-slate-400 border-slate-200">{fund.category}</Badge>
+        <Badge
+          variant="outline"
+          className="text-[9px] h-4 px-1 text-slate-400 border-slate-200"
+          title={fund.benchmarkName ? `比较基准：${fund.benchmarkName}` : "该类别没有可比的境内基准，未计算日内 Alpha"}
+        >
+          {fund.category}
+        </Badge>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
           {!isHeld && (
             <Button variant="ghost" size="sm" className="h-6 text-[10px] text-slate-400 hover:text-red-500 px-2" onClick={() => onAddHolding(fund.code, fund.name)}>
@@ -2507,7 +2464,9 @@ const FundDetailDialog: React.FC<{
               {fund.isEtf ? "ETF" : "OTC"}
             </Badge>
           </DialogTitle>
-          <DialogDescription>{fund.category} · Score {fund.score.toFixed(0)}</DialogDescription>
+          <DialogDescription>
+            {fund.category} · Score {fund.score.toFixed(0)} · {fund.benchmarkName ? `基准 ${fund.benchmarkName}` : "未套用境内基准"} · 源数据 {formatDataAge(fund.dataAgeMs)}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 mt-2">
@@ -2531,7 +2490,7 @@ const FundDetailDialog: React.FC<{
               { label: "近3月", val: fund.quarterChangePercent },
               { label: "近6月", val: fund.halfYearChangePercent },
               { label: "近1年", val: fund.yearChangePercent },
-              { label: "��动率", val: fund.volatility, suffix: "", neutral: true },
+              { label: "波动率", val: fund.volatility, suffix: "", neutral: true },
               { label: "最大回撤", val: fund.maxDrawdown ? -fund.maxDrawdown : 0, suffix: "", isDrawdown: true },
             ].map(m => (
               <div key={m.label} className="bg-slate-50 rounded-lg p-2 border border-slate-100">
@@ -2570,7 +2529,9 @@ const FundDetailDialog: React.FC<{
           <div className="bg-indigo-50/50 rounded-lg p-3 border border-indigo-100 space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5"><BrainCircuit className="w-4 h-4 text-indigo-500" /><span className="text-xs font-bold text-slate-700">AI 智能推演 (3日)</span></div>
-              <span className="text-[10px] font-mono text-slate-400">置信度 {fund.prediction.confidence.toFixed(0)}%</span>
+              <span className="text-[10px] font-mono text-slate-400">
+                方向概率 {fund.prediction.confidence.toFixed(0)}% · 数据{fund.prediction.dataReliability === "HIGH" ? "高" : fund.prediction.dataReliability === "MEDIUM" ? "中" : "低"}/证据{fund.prediction.evidenceReliability === "HIGH" ? "高" : fund.prediction.evidenceReliability === "MEDIUM" ? "中" : "低"}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <div className="flex-1 text-center p-2 bg-red-50 rounded-lg border border-red-100">
@@ -2800,7 +2761,9 @@ const HoldingDetailDialog: React.FC<{
               <div className="bg-indigo-50/50 rounded-lg p-3 border border-indigo-100 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5"><BrainCircuit className="w-4 h-4 text-indigo-500" /><span className="text-xs font-bold text-slate-700">AI 智能推演 (3日)</span></div>
-                  <span className="text-[10px] font-mono text-slate-400">置信度 {fund!.prediction.confidence.toFixed(0)}%</span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    方向概率 {fund!.prediction.confidence.toFixed(0)}% · 数据{fund!.prediction.dataReliability === "HIGH" ? "高" : fund!.prediction.dataReliability === "MEDIUM" ? "中" : "低"}/证据{fund!.prediction.evidenceReliability === "HIGH" ? "高" : fund!.prediction.evidenceReliability === "MEDIUM" ? "中" : "低"}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="flex-1 text-center p-2 bg-red-50 rounded-lg border border-red-100">
@@ -3600,18 +3563,9 @@ export const FundRadar: React.FC = () => {
     return () => window.removeEventListener("keydown", onKey);
   }, [signalFilter.size, activeSection, detailOpen, compareDialogOpen, holdingDialogOpen, clearSignalFilter]);
 
-  // ---- Cloud Sync ----
-  const syncCustomToCloud = async (newFunds: string[]) => {
-    try { await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/user/funds`, { method: "POST", headers: { Authorization: `Bearer ${publicAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ funds: newFunds }) }); } catch (e) { console.error("Custom funds cloud sync failed", e); }
-  };
-  const syncHoldingsToCloud = async (newHoldings: FundHolding[]) => {
-    try { await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/user/fund-holdings`, { method: "POST", headers: { Authorization: `Bearer ${publicAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ holdings: newHoldings }) }); } catch (e) { console.error("Holdings cloud sync failed", e); }
-  };
-
   const persistHoldings = useCallback((newHoldings: FundHolding[]) => {
     setHoldings(newHoldings);
     localStorage.setItem("MAKE_FUND_HOLDINGS", JSON.stringify(newHoldings));
-    syncHoldingsToCloud(newHoldings);
   }, []);
 
   // ---- Init ----
@@ -3627,29 +3581,6 @@ export const FundRadar: React.FC = () => {
       localHoldings = localHoldings.map(migrateHolding).map(recalcHolding);
       setHoldings(localHoldings);
 
-      try {
-        const [fundsRes, holdingsRes] = await Promise.all([
-          fetch(`https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/user/funds`, { headers: { Authorization: `Bearer ${publicAnonKey}` } }),
-          fetch(`https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/user/fund-holdings`, { headers: { Authorization: `Bearer ${publicAnonKey}` } }),
-        ]);
-        if (fundsRes.ok) {
-          const data = await fundsRes.json();
-          if (Array.isArray(data.funds) && data.funds.length > 0) {
-            const merged = Array.from(new Set([...localFunds, ...data.funds]));
-            if (merged.length !== localFunds.length) { setCustomFunds(merged); localStorage.setItem("MAKE_CUSTOM_FUNDS", JSON.stringify(merged)); syncCustomToCloud(merged); }
-          }
-        }
-        if (holdingsRes.ok) {
-          const data = await holdingsRes.json();
-          if (Array.isArray(data.holdings) && data.holdings.length > 0) {
-            const localIds = new Set(localHoldings.map(h => h.id));
-            const cloudOnly = (data.holdings as FundHolding[]).filter(h => !localIds.has(h.id)).map(migrateHolding).map(recalcHolding);
-            if (cloudOnly.length > 0) { const merged = [...localHoldings, ...cloudOnly]; setHoldings(merged); localStorage.setItem("MAKE_FUND_HOLDINGS", JSON.stringify(merged)); }
-            else if (localHoldings.length === 0) { const migrated = data.holdings.map(migrateHolding).map(recalcHolding); setHoldings(migrated); localStorage.setItem("MAKE_FUND_HOLDINGS", JSON.stringify(migrated)); }
-          }
-        }
-      } catch (e) { console.error("Cloud load failed", e); }
-
       setIsInitialized(true);
     };
     init();
@@ -3658,22 +3589,20 @@ export const FundRadar: React.FC = () => {
   useEffect(() => { if (isInitialized) loadFundData(); }, [isInitialized]);
 
   // ---- Load Data ----
-  const loadFundData = async () => {
+  const loadFundData = async (forceRefresh = false) => {
     try {
       setLoading(true);
       const [indicesRes] = await Promise.all([fetchMarketIndices()]);
 
       // V66.1: Extract index data
+      let resolvedIndices: IndexData[] = [];
       if (indicesRes?.data) {
-        const idxData: IndexData[] = WATCHED_INDICES.map(code => {
+        resolvedIndices = WATCHED_INDICES.map(code => {
           const d = indicesRes.data.find((i: any) => i.code === code);
           return d ? { code, name: INDEX_NAMES[code] || d.name || code, current: d.current || d.price || 0, changePercent: d.changePercent || 0 } : null;
         }).filter(Boolean) as IndexData[];
-        setIndices(idxData);
+        setIndices(resolvedIndices);
       }
-
-      const sh = indicesRes?.data?.find((i: any) => i.code === "sh000001");
-      const marketChange = sh?.changePercent || 0;
 
       // V67 FIX: Read from ref to get latest state, avoiding stale closure from setTimeout
       const latestCustom = customFundsRef.current;
@@ -3686,7 +3615,7 @@ export const FundRadar: React.FC = () => {
       console.log(`[FundRadar] Loading ${allCodes.length} codes (ETF: ${etfCodes.length}, OTC: ${otcCodes.length})`);
 
       const [etfRealtime, etfHist, fundHist, otcRealtime] = await Promise.all([
-        fetchStockData(etfCodes), fetchStockHistoryBatch(etfCodes), fetchFundHistoryBatch(otcCodes), fetchFunds(otcCodes),
+        fetchStockData(etfCodes, forceRefresh), fetchStockHistoryBatch(etfCodes), fetchFundHistoryBatch(otcCodes), fetchFunds(otcCodes, forceRefresh),
       ]);
 
       const mergedFunds: ExtendedFund[] = [];
@@ -3699,7 +3628,9 @@ export const FundRadar: React.FC = () => {
         const currentPrice = rt.estimateNetValue || rt.current || rt.currentPrice || 0;
         const indicators = calculateIndicators(hist, currentPrice);
         const atr = indicators.atr || currentPrice * 0.02 || 0;
-        const prediction = predictPriceAction(hist, currentPrice, atr, isEtf ? 10 : 30);
+        const prediction = predictFundPriceAction(hist, currentPrice, atr, isEtf ? 10 : 30);
+        const sourceAsOf = rt.sourceAsOf || rt.lastUpdate;
+        const freshness = evaluateFundDataFreshness(sourceAsOf, Date.now(), isEtf);
         const getHistPerf = (days: number) => {
           if (hist.length <= days) return undefined;
           const past = hist[hist.length - days]; const latestHist = hist[hist.length - 1];
@@ -3713,6 +3644,12 @@ export const FundRadar: React.FC = () => {
           const startVal = (segment[0] as any).accumulated || segment[0].close; if (!startVal) return [];
           return segment.filter((_, i) => i % 5 === 0 || i === segment.length - 1).map(h => ({ date: h.day, value: (((h as any).accumulated || h.close) - startVal) / startVal * 100 }));
         })();
+        const historyData: FundNavPoint[] = hist
+          .map(h => ({
+            date: h.day,
+            nav: Number(h.close),
+          }))
+          .filter(point => point.date && Number.isFinite(point.nav) && point.nav > 0);
         return {
           code, name: rt.name,
           category: FUND_CATEGORIES.find(c => c.codes.includes(code))?.name || inferCategory(rt.name || "", rt.fundType, rt.indexName),
@@ -3721,7 +3658,12 @@ export const FundRadar: React.FC = () => {
           quarterChangePercent: safeNumber(rt.quarterChangePercent) ?? getHistPerf(60),
           halfYearChangePercent: safeNumber(rt.halfYearChangePercent) ?? getHistPerf(120),
           dayChangePercent: rt.changePercent || rt.estimateChangePercent,
-          trendData, volatility: (atr / currentPrice) * 100, maxDrawdown: calcMaxDrawdown(hist),
+          trendData, historyData,
+          sourceAsOf,
+          dataStatus: freshness.status,
+          dataAgeMs: freshness.ageMs,
+          volatility: currentPrice > 0 ? (atr / currentPrice) * 100 : 0,
+          maxDrawdown: calcMaxDrawdown(hist),
           volumeRatio: isEtf && indicators.avgVol5 ? rt.volume / indicators.avgVol5 : 1,
           rsi: indicators.rsi?.rsi12 || 50, mfi: indicators.mfi || 50, atr, isEtf,
           pressureLevel: prediction.targetHigh, supportLevel: prediction.targetLow,
@@ -3735,13 +3677,24 @@ export const FundRadar: React.FC = () => {
       otcRealtime.forEach((rt: any) => { const f = buildFund(rt.code, rt, false); if (f) mergedFunds.push(f); });
 
       const activeThemes = marketThemes.filter(t => t.strength > 60).map(t => t.name);
-      const context: MarketContext = { marketChange, csi300Change: 0, marketYtd: 0, marketVolatility: 0, trend: marketChange > 0.5 ? "Bull" : "Bear", sectorPerformance: {} };
-      const finalFunds = mergedFunds.map(f => { const score = calculatePredatorScore(f, context, activeThemes); const { signal, guidance } = generatePredatorStrategy(f, score); return { ...f, score, signal, guidance }; });
+      const finalFunds = mergedFunds.map(f => {
+        const benchmark = resolveFundBenchmark(f.category, resolvedIndices);
+        const context: MarketContext = {
+          marketChange: benchmark?.changePercent || 0,
+          benchmarkAvailable: Boolean(benchmark),
+          csi300Change: resolvedIndices.find(index => index.code === "sh000300")?.changePercent || 0,
+          marketYtd: 0,
+          marketVolatility: 0,
+          trend: (benchmark?.changePercent || 0) > 0.5 ? "Bull" : (benchmark?.changePercent || 0) < -0.5 ? "Bear" : "Choppy",
+          sectorPerformance: {},
+        };
+        const withBenchmark = { ...f, benchmarkName: benchmark?.name };
+        const score = calculatePredatorScore(withBenchmark, context, activeThemes);
+        const { signal, guidance } = generatePredatorStrategy(withBenchmark, score);
+        return { ...withBenchmark, score, signal, guidance };
+      });
 
-      // V66.4: A/C类去重，同名基金只保留C类
-      const dedupedFunds = deduplicateAC(finalFunds);
-
-      setFunds(dedupedFunds.sort((a, b) => b.score - a.score));
+      setFunds(finalFunds.sort((a, b) => b.score - a.score));
       setLastRefresh(new Date().toLocaleTimeString());
     } catch (e) { console.error("Fund loading failed", e); toast.error("基金数据加载失败"); } finally { setLoading(false); }
   };
@@ -3762,7 +3715,9 @@ export const FundRadar: React.FC = () => {
       const currentPrice = (rt as any).estimateNetValue || (rt as any).current || (rt as any).currentPrice || 0;
       const indicators = calculateIndicators(hist, currentPrice);
       const atr = indicators.atr || currentPrice * 0.02 || 0;
-      const prediction = predictPriceAction(hist, currentPrice, atr, isEtf ? 10 : 30);
+      const prediction = predictFundPriceAction(hist, currentPrice, atr, isEtf ? 10 : 30);
+      const sourceAsOf = (rt as any).sourceAsOf || (rt as any).lastUpdate;
+      const freshness = evaluateFundDataFreshness(sourceAsOf, Date.now(), isEtf);
       const safeNum = (v: any) => { if (typeof v === "number") return v; if (typeof v === "string") { const p = parseFloat(v); return isNaN(p) ? undefined : p; } return undefined; };
       const getHistPerf = (days: number) => {
         if (hist.length <= days) return undefined;
@@ -3777,6 +3732,9 @@ export const FundRadar: React.FC = () => {
         const sv = (seg[0] as any).accumulated || seg[0].close; if (!sv) return [];
         return seg.filter((_, i) => i % 5 === 0 || i === seg.length - 1).map(h => ({ date: h.day, value: (((h as any).accumulated || h.close) - sv) / sv * 100 }));
       })();
+      const historyData: FundNavPoint[] = hist
+        .map(h => ({ date: h.day, nav: Number(h.close) }))
+        .filter(point => point.date && Number.isFinite(point.nav) && point.nav > 0);
       const fund: ExtendedFund = {
         code, name: (rt as any).name || code,
         category: FUND_CATEGORIES.find(c => c.codes.includes(code))?.name || inferCategory((rt as any).name || "", (rt as any).fundType, (rt as any).indexName),
@@ -3785,7 +3743,12 @@ export const FundRadar: React.FC = () => {
         quarterChangePercent: safeNum((rt as any).quarterChangePercent) ?? getHistPerf(60),
         halfYearChangePercent: safeNum((rt as any).halfYearChangePercent) ?? getHistPerf(120),
         dayChangePercent: (rt as any).changePercent || (rt as any).estimateChangePercent,
-        trendData, volatility: currentPrice ? (atr / currentPrice) * 100 : 0, maxDrawdown: calcMaxDrawdown(hist),
+        trendData, historyData,
+        sourceAsOf,
+        dataStatus: freshness.status,
+        dataAgeMs: freshness.ageMs,
+        volatility: currentPrice ? (atr / currentPrice) * 100 : 0,
+        maxDrawdown: calcMaxDrawdown(hist),
         volumeRatio: isEtf && indicators.avgVol5 ? (rt as any).volume / indicators.avgVol5 : 1,
         rsi: indicators.rsi?.rsi12 || 50, mfi: indicators.mfi || 50, atr, isEtf,
         pressureLevel: prediction.targetHigh, supportLevel: prediction.targetLow,
@@ -3793,13 +3756,22 @@ export const FundRadar: React.FC = () => {
         smartTrace: { inflowScore: isEtf && (rt as any).volume > (indicators.avgVol5 || 0) * 1.5 ? 80 : 40, divergence: false, elasticity: 50 },
         signal: {} as any, guidance: {} as any,
       } as ExtendedFund;
-      const shIdx = indices.find(i => i.code === "sh000001");
-      const mc = shIdx?.changePercent || 0;
       const at = marketThemes.filter(t => t.strength > 60).map(t => t.name);
-      const ctx: MarketContext = { marketChange: mc, csi300Change: 0, marketYtd: 0, marketVolatility: 0, trend: mc > 0.5 ? "Bull" : "Bear", sectorPerformance: {} };
-      const score = calculatePredatorScore(fund, ctx, at);
-      const { signal, guidance } = generatePredatorStrategy(fund, score);
-      const final = { ...fund, score, signal, guidance };
+      const benchmark = resolveFundBenchmark(fund.category, indices);
+      const benchmarkChange = benchmark?.changePercent || 0;
+      const ctx: MarketContext = {
+        marketChange: benchmarkChange,
+        benchmarkAvailable: Boolean(benchmark),
+        csi300Change: indices.find(index => index.code === "sh000300")?.changePercent || 0,
+        marketYtd: 0,
+        marketVolatility: 0,
+        trend: benchmarkChange > 0.5 ? "Bull" : benchmarkChange < -0.5 ? "Bear" : "Choppy",
+        sectorPerformance: {},
+      };
+      const withBenchmark = { ...fund, benchmarkName: benchmark?.name };
+      const score = calculatePredatorScore(withBenchmark, ctx, at);
+      const { signal, guidance } = generatePredatorStrategy(withBenchmark, score);
+      const final = { ...withBenchmark, score, signal, guidance };
       setFunds(prev => {
         const idx = prev.findIndex(f => f.code === code);
         if (idx >= 0) { const u = [...prev]; u[idx] = final; return u; }
@@ -3822,7 +3794,6 @@ export const FundRadar: React.FC = () => {
       if (prev.includes(code)) return prev;
       const nf = [...prev, code];
       localStorage.setItem("MAKE_CUSTOM_FUNDS", JSON.stringify(nf));
-      syncCustomToCloud(nf);
       customFundsRef.current = nf;
       toast.success("已加入自选");
       return nf;
@@ -3833,7 +3804,6 @@ export const FundRadar: React.FC = () => {
     setCustomFunds(prev => {
       const nf = prev.filter(c => c !== code);
       localStorage.setItem("MAKE_CUSTOM_FUNDS", JSON.stringify(nf));
-      syncCustomToCloud(nf);
       customFundsRef.current = nf;
       toast("已移除自选");
       return nf;
@@ -3862,7 +3832,7 @@ export const FundRadar: React.FC = () => {
         setInputCode("");
         loadSingleFund(code);
       } else {
-        toast("该基金已��自选中"); setInputCode("");
+        toast("该基金已在自选中"); setInputCode("");
       }
     } else if (inputCode.trim()) {
       toast.error("未识别到6位基金代码，请输入正确的基金代码");
@@ -3877,7 +3847,6 @@ export const FundRadar: React.FC = () => {
     const nf = [...current, ...newCodes];
     setCustomFunds(nf);
     localStorage.setItem("MAKE_CUSTOM_FUNDS", JSON.stringify(nf));
-    syncCustomToCloud(nf);
     customFundsRef.current = nf;
     loadFundsBatch(newCodes);
   }, []);
@@ -3894,7 +3863,6 @@ export const FundRadar: React.FC = () => {
       const nf = [...customFundsRef.current, h.code];
       setCustomFunds(nf);
       localStorage.setItem("MAKE_CUSTOM_FUNDS", JSON.stringify(nf));
-      syncCustomToCloud(nf);
       customFundsRef.current = nf;
     }
     loadSingleFund(h.code);
@@ -4038,14 +4006,15 @@ export const FundRadar: React.FC = () => {
           </h2>
           <p className="text-slate-400 text-xs mt-1">
             智能监控 · 持仓管理 · 标签分组 · 调仓建议 · 盈亏日历
-            {lastRefresh && <span className="ml-2 text-slate-300">更新于 {lastRefresh}</span>}
+            {lastRefresh && <span className="ml-2 text-slate-300">请求于 {lastRefresh}</span>}
+            <span className="ml-2 text-slate-300">持仓仅保存在本机</span>
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="relative" ref={searchBoxRef}>
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none z-10" />
             {searchingApi && <Loader2 className="absolute right-8 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-300 animate-spin z-10" />}
-            <Input placeholder="搜索���称 / 代码添加自选" className="h-8 w-56 pl-8 pr-8 text-xs bg-white border shadow-sm rounded-lg focus-visible:ring-red-200"
+            <Input placeholder="搜索名称 / 代码添加自选" className="h-8 w-56 pl-8 pr-8 text-xs bg-white border shadow-sm rounded-lg focus-visible:ring-red-200"
               value={searchQuery} onChange={e => { setSearchQuery(e.target.value); if (!e.target.value.trim()) setShowSuggestions(false); }}
               onFocus={() => { if (searchSuggestions.length > 0) setShowSuggestions(true); }}
               onKeyDown={e => {
@@ -4105,7 +4074,7 @@ export const FundRadar: React.FC = () => {
           <Button variant="outline" size="sm" onClick={() => setImageImportOpen(true)} className="gap-1 h-8 text-xs" title="截图识别导入基金">
             <ImageUp className="w-3.5 h-3.5" /> 导入
           </Button>
-          <Button variant="outline" size="sm" onClick={() => loadFundData()} disabled={loading} className="gap-1.5 h-8">
+          <Button variant="outline" size="sm" onClick={() => loadFundData(true)} disabled={loading} className="gap-1.5 h-8">
             <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} /> {loading ? "扫描中" : "刷新"}
           </Button>
         </div>

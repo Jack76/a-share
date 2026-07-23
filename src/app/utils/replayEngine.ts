@@ -10,6 +10,7 @@ import type { MarketCalibrationContext, MarketRegime } from './predictionCalibra
 import { getChinaTradingClock, type MarketTimestamp } from './marketClock';
 import { detectBlackSwan, shouldOverrideSignal } from './blackSwanDetector';
 import {
+  aggregateTradeLifecycles,
   calculateStrategyAcceptanceMetrics,
   evaluateStrategyAcceptance,
   type EquityObservation,
@@ -89,6 +90,11 @@ interface PendingBuy {
   regime: MarketRegime;
 }
 
+interface PendingSell {
+  createdAt: number;
+  fraction: number;
+}
+
 interface Position {
   shares: number;
   entryPrice: number;
@@ -149,6 +155,10 @@ export const runDecisionReplay = (
   const ordered = [...snapshots].sort(
     (a, b) => getChinaTradingClock(a.timestamp).timestampMs - getChinaTradingClock(b.timestamp).timestampMs,
   );
+  const targetCode = ordered[0]?.stock.code;
+  if (ordered.some(snapshot => snapshot.stock.code !== targetCode)) {
+    throw new Error('Replay snapshots must contain exactly one target instrument');
+  }
   const positionFraction = Math.min(1, Math.max(0.01, config.positionFraction ?? 0.2));
   const commissionRate = Math.max(0, config.commissionRate ?? 0.0003);
   const sellTaxRate = Math.max(0, config.sellTaxRate ?? 0.0005);
@@ -158,6 +168,7 @@ export const runDecisionReplay = (
   let cash = config.initialCapital;
   let position: Position | null = null;
   let pendingBuy: PendingBuy | null = null;
+  let pendingSell: PendingSell | null = null;
   let previousPrediction: { price: number; observation: Omit<PredictionObservation, 'outcomeUp'> } | null = null;
   const signals: ReplaySignalRecord[] = [];
   const trades: ReplayTrade[] = [];
@@ -246,6 +257,17 @@ export const runDecisionReplay = (
       pendingBuy = null;
     }
 
+    if (pendingSell && position && clock.tradeDate !== position.entryTradeDate) {
+      if (stock.isLimitDown) {
+        rejections.push({ timestamp, side: 'SELL', reason: '跌停封单无法假设成交' });
+      } else {
+        closePosition(position, timestamp, stock.open || currentPrice, 'SIGNAL', pendingSell.fraction);
+        pendingSell = null;
+      }
+    } else if (pendingSell && !position) {
+      pendingSell = null;
+    }
+
     const trapRisk = analyzeTrapRiskV41(stock, snapshot.phase, snapshot.allStocks);
     const evaluatedStock = { ...stock, trapRiskScore: trapRisk.score };
     const theme = snapshot.themes.find(item => item.name === stock.concept);
@@ -323,12 +345,18 @@ export const runDecisionReplay = (
         const dayHigh = stock.high || currentPrice;
         if (position.stopLoss > 0 && dayOpen <= position.stopLoss) {
           closePosition(position, timestamp, dayOpen, 'STOP');
+          pendingSell = null;
         } else if (position.stopLoss > 0 && dayLow <= position.stopLoss) {
           closePosition(position, timestamp, position.stopLoss, 'STOP');
+          pendingSell = null;
         } else if (position.target > 0 && dayHigh >= position.target) {
           closePosition(position, timestamp, position.target, 'TARGET');
+          pendingSell = null;
         } else if (signal.signalType === 'SELL') {
-          closePosition(position, timestamp, currentPrice, 'SIGNAL', signalExitFraction);
+          pendingSell = pendingSell || {
+            createdAt: timestamp,
+            fraction: signalExitFraction,
+          };
         }
       }
     }
@@ -357,7 +385,12 @@ export const runDecisionReplay = (
     }
   }
 
-  const metrics = calculateStrategyAcceptanceMetrics({ trades, equityCurve, predictions });
+  const acceptanceTrades = aggregateTradeLifecycles(trades);
+  const metrics = calculateStrategyAcceptanceMetrics({
+    trades: acceptanceTrades,
+    equityCurve,
+    predictions,
+  });
   const acceptance = evaluateStrategyAcceptance(metrics, config.acceptancePolicy);
   const lastPrice = last?.stock.currentPrice || 0;
   const endingEquity = cash + (position ? position.shares * lastPrice : 0);

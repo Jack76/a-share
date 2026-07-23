@@ -7,7 +7,8 @@
     "build": "vite build",
     "dev": "vite --host 127.0.0.1 --port 4174",
     "preview": "vite preview --host 127.0.0.1 --port 4175",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -72,6 +73,7 @@
     "@tailwindcss/vite": "4.1.12",
     "@vitejs/plugin-react": "4.7.0",
     "tailwindcss": "4.1.12",
+    "typescript": "5.8.3",
     "vite": "6.3.5",
     "wrangler": "4.92.0"
   },

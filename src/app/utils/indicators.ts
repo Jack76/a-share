@@ -89,7 +89,20 @@ export const analyzeIntradayStructure = (
     const volumes = history.map(h => h.volume);
 
     // 1. MACDFS (分时MACD)
-    const macd = calculateMACD(closes);
+    const rawMacd = calculateMACD(closes);
+    const previousMacd = calculateMACD(closes.slice(0, -1));
+    const macd = rawMacd
+      ? {
+        dif: rawMacd.dif,
+        dea: rawMacd.dea,
+        macd: rawMacd.bar,
+        signal: previousMacd && previousMacd.dif <= previousMacd.dea && rawMacd.dif > rawMacd.dea
+          ? 'GoldenCross' as const
+          : previousMacd && previousMacd.dif >= previousMacd.dea && rawMacd.dif < rawMacd.dea
+            ? 'DeadCross' as const
+            : 'None' as const,
+      }
+      : null;
 
     // 2. Volume Structure (分时量)
     const lastVol = volumes[volumes.length - 1];
