@@ -221,7 +221,7 @@ export const StockMobileCard: React.FC<StockMobileCardProps> = ({
                       className="text-[8px] font-mono text-slate-400"
                       title={stock.aiPrediction.prediction.warnings?.join('\n')}
                     >
-                      {stock.aiPrediction.prediction.probability}% · {stock.aiPrediction.prediction.reliability === 'HIGH' ? '高' : stock.aiPrediction.prediction.reliability === 'MEDIUM' ? '中' : '低'}
+                      {stock.aiPrediction.prediction.probability}% · 数据{stock.aiPrediction.prediction.dataReliability === 'HIGH' ? '高' : stock.aiPrediction.prediction.dataReliability === 'MEDIUM' ? '中' : '低'}/证据{stock.aiPrediction.prediction.evidenceReliability === 'HIGH' ? '高' : stock.aiPrediction.prediction.evidenceReliability === 'MEDIUM' ? '中' : '低'}
                     </span>
                  </div>
              )}

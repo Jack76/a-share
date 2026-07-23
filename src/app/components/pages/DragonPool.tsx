@@ -15,7 +15,8 @@ import { fetchStockData, searchStockByName, fetchStockHistoryBatch } from '../..
 import { StockDiagnosisDialog } from './StockDiagnosisDialog';
 import { SignalSystemGuide } from './SignalSystemGuide';
 import { calculateIndicators, TechnicalIndicators } from '../../utils/indicators';
-import { analyzeStockSignal, calculateTrapRisk } from '../../utils/predatorEngine';
+import { analyzeStockSignal } from '../../utils/predatorEngine';
+import { analyzeTrapRiskV41 } from '../../utils/trapGuardV41';
 import { Sparkline } from '../Sparkline';
 import { cn } from '../ui/utils';
 import { ShieldCheck, Fingerprint, Activity, MousePointer2, Ghost } from 'lucide-react';
@@ -256,14 +257,14 @@ export const DragonPool: React.FC = () => {
 
               Object.entries(historyMap).forEach(([code, history]) => {
                   const inflow = calculateNetInflow(history);
-                  const tech = calculateIndicators(history);
                   const stockToUpdate = stocks.find(s => s.code === code);
+                  const tech = calculateIndicators(history, stockToUpdate?.currentPrice);
                   
                   if (stockToUpdate) {
                       let tempStock = { ...stockToUpdate, technicals: tech, mainForceInflow: inflow };
                       
                       // V7.1: Calculate Real-time Trap Risk
-                      const trapAnalysis = calculateTrapRisk(tempStock);
+                      const trapAnalysis = analyzeTrapRiskV41(tempStock, phase, stocks);
                       tempStock = { 
                           ...tempStock, 
                           trapRiskScore: trapAnalysis.score, 
@@ -911,13 +912,13 @@ export const DragonPool: React.FC = () => {
 
             Object.entries(historyMap).forEach(([code, history]) => {
                 const inflow = calculateNetInflow(history);
-                const tech = calculateIndicators(history);
                 const stock = stocks.find(s => s.code === code);
+                const tech = calculateIndicators(history, stock?.currentPrice);
                 
                 if (stock) {
                     let tempStock = { ...stock, technicals: tech, mainForceInflow: inflow };
                     
-                    const trapAnalysis = calculateTrapRisk(tempStock);
+                    const trapAnalysis = analyzeTrapRiskV41(tempStock, phase, stocks);
                     tempStock = { 
                         ...tempStock, 
                         trapRiskScore: trapAnalysis.score, 

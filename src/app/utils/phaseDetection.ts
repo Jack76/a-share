@@ -1,3 +1,18 @@
+import type { DailyMetrics, MarketPhase, Stock } from '../types';
+import { calculateTopConceptConsensus } from './marketConcepts.ts';
+
+export interface PhaseScore {
+  phase: MarketPhase;
+  confidence: number;
+  reason: string;
+}
+
+export interface PhaseCrossSectionContext {
+  fullMarketEntropy?: number;
+  themeConsensus?: number;
+  fullMarketSampleSize?: number;
+}
+
 /**
  * v41.0 核心阶段判定算法 (完整决策树)
  * 
@@ -15,7 +30,8 @@ export const detectMarketPhase = (
   metrics: DailyMetrics,
   stocks: Stock[],
   prevPhase?: MarketPhase,
-  prevMetrics?: DailyMetrics // V59.6: Optional previous day metrics for velocity calculation
+  prevMetrics?: DailyMetrics, // V59.6: Optional previous day metrics for velocity calculation
+  crossSection?: PhaseCrossSectionContext,
 ): PhaseScore => {
   
   // === 边界检查：防止空数据导致系统崩溃 ===
@@ -39,7 +55,10 @@ export const detectMarketPhase = (
   const limitDownCount = metrics.limitDownCount || 0;
   const height = metrics.spaceHeight || 0;
   const temp = metrics.marketTemp || 50;
-  const entropy = metrics.marketEntropy || 50;
+  const hasVerifiedCrossSection = (crossSection?.fullMarketSampleSize || 0) >= 4_000;
+  const entropy = hasVerifiedCrossSection && Number.isFinite(crossSection?.fullMarketEntropy)
+    ? crossSection?.fullMarketEntropy as number
+    : metrics.marketEntropy || 50;
   
   // 计算涨停质量（缩量板占比）
   const limitUpStocks = stocks.filter(s => s.isLimitUp);
@@ -56,15 +75,9 @@ export const detectMarketPhase = (
   const tempVelocity = temp - prevTemp;                        // 负值 = 温度下降
   
   // 计算板块一致性（前10涨幅股中同板块占比）
-  const top10 = [...stocks].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0)).slice(0, 10);
-  const conceptCounts: Record<string, number> = {};
-  top10.forEach(s => {
-    if (s.concept) {
-      conceptCounts[s.concept] = (conceptCounts[s.concept] || 0) + 1;
-    }
-  });
-  const maxConceptCount = Math.max(...Object.values(conceptCounts), 0);
-  const consensus = maxConceptCount / 10; // 0-1
+  const consensus = hasVerifiedCrossSection && Number.isFinite(crossSection?.themeConsensus)
+    ? crossSection?.themeConsensus as number
+    : calculateTopConceptConsensus(stocks).consensus;
   
   // 1. 冰封期 (Ice) - 最优先判定
   // 特征：跌停潮、市场温度极低、恐慌情绪

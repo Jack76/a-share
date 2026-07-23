@@ -1,4 +1,10 @@
 import { Stock, MarketPhase, Theme } from '../types';
+import {
+  getChinaTradingClock,
+  isChinaAuctionPhase,
+  isChinaAuctionRelevant,
+  type MarketTimestamp,
+} from './marketClock';
 
 /**
  * AUCTION BATTLE ENGINE V63.0 (P1)
@@ -90,6 +96,7 @@ export function analyzeAuctionBattle(
   stocks: Stock[],
   phase: MarketPhase,
   themes: Theme[] = [],
+  timestamp: MarketTimestamp = Date.now(),
 ): AuctionBattleResult {
   const signals: AuctionSignal[] = [];
   const themeAuctionMap: AuctionBattleResult['themeAuctionMap'] = {};
@@ -199,7 +206,7 @@ export function analyzeAuctionBattle(
     signals,
     themeAuctionMap,
     globalAdvice,
-    timestamp: Date.now(),
+    timestamp: getChinaTradingClock(timestamp).timestampMs,
   };
 }
 
@@ -492,20 +499,14 @@ function computeAuctionStrength(openGapPct: number, volRatio: number, stock: Sto
 /**
  * 判断当前时间是否在竞价时段 (09:15-09:30)
  */
-export function isAuctionPhase(): boolean {
-  const now = new Date();
-  const h = now.getHours();
-  const m = now.getMinutes();
-  return (h === 9 && m >= 15 && m <= 30);
+export function isAuctionPhase(timestamp: MarketTimestamp = Date.now()): boolean {
+  return isChinaAuctionPhase(timestamp);
 }
 
 /**
  * 判断当前是否在竞价博弈有效时段 (09:15-10:00)
  * 竞价信号在开盘后30分钟内仍有参考价值
  */
-export function isAuctionRelevant(): boolean {
-  const now = new Date();
-  const h = now.getHours();
-  const m = now.getMinutes();
-  return (h === 9 && m >= 15) || (h === 9 && m <= 59) || (h === 10 && m === 0);
+export function isAuctionRelevant(timestamp: MarketTimestamp = Date.now()): boolean {
+  return isChinaAuctionRelevant(timestamp);
 }

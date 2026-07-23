@@ -13,6 +13,7 @@ import {
     calculateRelativeSectorStrength,
     simulateAuctionData,
     calculateMarketEntropy,
+    calculateFullMarketEntropy,
     calculateDragonSurvival,
     detectInflection,
     calculateMoneyQuality,
@@ -28,7 +29,11 @@ import {
 } from '../utils/scoring';
 import { detectMarketPhase } from '../utils/algorithmV41';
 import { analyzeTrapRiskV41 } from '../utils/trapGuardV41';
-import { analyzeStockSignal } from '../utils/predatorEngine';
+import {
+  analyzeStockSignal,
+  type MicroStructureContext,
+  type PredatorSignal,
+} from '../utils/predatorEngine';
 import type { MarketCalibrationContext } from '../utils/predictionCalibration';
 import { calculateIndicators, analyzeIntradayStructure } from '../utils/indicators';
 import {
@@ -48,6 +53,7 @@ import { getPresetStocks, detectEventDrivenMode, type EventDrivenDetection } fro
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { calculateRealtimeMetrics } from "../utils/realtimeAnalysis";
 import { detectBlackSwan, shouldOverrideSignal } from "../utils/blackSwanDetector";
+import { calculateThemeBreadthConsensus, normalizeMarketConcept } from '../utils/marketConcepts';
 
 interface TradingState {
   stocks?: Stock[];
@@ -113,6 +119,16 @@ interface TradingContextType {
   isSaving: boolean;
   forceRefreshHistory: () => void;
   eventDrivenMode: EventDrivenDetection | null; // V64.0
+  analyzeLiveStockSignal: (
+    stock: Stock,
+    manualVelocity?: number,
+    microContext?: MicroStructureContext,
+    intentContext?: {
+      intent: 'Accumulate' | 'Distribute' | 'Neutral';
+      decoyScore: number;
+      algoReason?: string;
+    },
+  ) => PredatorSignal;
 }
 
 const defaultMetrics: DailyMetrics = {
@@ -154,7 +170,7 @@ const isMarketStatsUsable = (snapshot: MarketStatsSnapshot | null): snapshot is 
   if (directionalCoverage < 0.85) return false;
 
   const quality = snapshot.quality;
-  if (!quality) return true; // Backward compatibility during server rollout.
+  if (!quality) return false;
   const maxSourceAgeMs = isChinaMarketSession() ? 180_000 : 7 * 24 * 60 * 60 * 1000;
   const sourceIsFreshEnough = !Number.isFinite(quality.sourceAgeMs) ||
     (quality.sourceAgeMs || 0) <= maxSourceAgeMs;
@@ -212,6 +228,58 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => { historyRef.current = sentimentHistory; }, [sentimentHistory]);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
+  const analyzeLiveStockSignal = useCallback((
+    stock: Stock,
+    manualVelocity?: number,
+    microContext?: MicroStructureContext,
+    intentContext?: {
+      intent: 'Accumulate' | 'Distribute' | 'Neutral';
+      decoyScore: number;
+      algoReason?: string;
+    },
+  ) => {
+    const shIndex = marketIndices.find(index => index.code.includes('sh000001'));
+    const currentMarketDataStatus = marketStats
+      ? marketStats.quality?.status || 'PARTIAL'
+      : 'UNAVAILABLE';
+    const currentMarketCoverage = marketStats?.quality?.coverage ?? (marketStats
+      ? (marketStats.upCount + marketStats.downCount + marketStats.flatCount) / Math.max(1, marketStats.totalCount)
+      : 0);
+    const marketContext: MarketCalibrationContext = {
+      totalCount: marketStats?.totalCount,
+      upCount: marketStats?.upCount,
+      downCount: marketStats?.downCount,
+      limitUpCount: marketStats?.limitUpCount,
+      limitDownCount: marketStats?.limitDownCount,
+      dataStatus: currentMarketDataStatus,
+      coverage: currentMarketCoverage,
+      sourceAgeMs: marketStats?.quality?.sourceAgeMs,
+      isMarketOpen,
+      phaseConfidence: metrics.phaseConfidence,
+      indexChange: shIndex?.changePercent || 0,
+      isIndexBull: indexTechnicals?.isBull,
+      isIndexStrong: indexTechnicals?.isStrong,
+    };
+    const theme = marketThemes.find(item => item.name === normalizeMarketConcept(stock.concept));
+    const sectorContext = theme ? {
+      rank: marketThemes.indexOf(theme) + 1,
+      name: theme.name,
+      isMainline: theme.type === 'Main',
+    } : undefined;
+
+    return analyzeStockSignal(
+      stock,
+      phaseRef.current,
+      marketContext,
+      sectorContext,
+      marketThemes,
+      manualVelocity,
+      microContext,
+      intentContext,
+      eventDrivenMode || undefined,
+    );
+  }, [eventDrivenMode, indexTechnicals, isMarketOpen, marketIndices, marketStats, marketThemes, metrics.phaseConfidence]);
+
   // Unified score recalculation logic
   const recalculateStockScores = (
     currentStocks: Stock[],
@@ -224,7 +292,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   ): Stock[] => {
       // Step 1: Basic identification, Technicals & Role assignment
       let updated = currentStocks.map(s => {
-        const tech = calculateIndicators(s.history || []);
+        const tech = calculateIndicators(s.history || [], s.currentPrice);
         
         return {
             ...s,
@@ -242,7 +310,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 recentLow: tech.recentLow || 0,
                 rsi: tech.rsi || undefined,
                 mfi: tech.mfi || undefined,
-                chipPressure: tech.chipPressure || calculateChipPressure(s.history || [], s.currentPrice || 0)
+                chipPressure: tech.chipPressure ?? calculateChipPressure(s.history || [], s.currentPrice || 0)
             },
             role: identifyRole(s, currentStocks, currentIndices),
             strengthScore: calculateLimitUpStrength(s),
@@ -991,7 +1059,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
               limitDownPrice: s.limitDownPrice,
               isLimitUp: Boolean(s.isLimitUp),
               isLimitDown: Boolean(s.isLimitDown),
-              concept: '自动发现',
+              concept: undefined,
               role: 'Observer',
               status: 'Watch',
               tags: ['Auto-Discovered'],
@@ -1031,7 +1099,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           let currentThemes = themesRef.current;
           if (currentThemes.length === 0) {
               // Extract unique themes from current stocks if none exist
-              const uniqueConcepts = Array.from(new Set(nextStocks.map(s => s.concept).filter(Boolean)));
+              const uniqueConcepts = Array.from(new Set(
+                nextStocks.map(s => normalizeMarketConcept(s.concept)).filter((name): name is string => Boolean(name))
+              ));
               currentThemes = uniqueConcepts.map(name => ({
                   id: `theme-${name}`,
                   name: name as string,
@@ -1109,7 +1179,11 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const divergenceIdx = calculateDivergenceIndex(shIndexVal, energy / 10);
           
           // New v24.0 Metrics
-          const entropy = calculateMarketEntropy(nextStocks);
+          const hasFullMarketCrossSection = marketList.length >= 4_000;
+          const entropy = hasFullMarketCrossSection
+            ? calculateFullMarketEntropy(marketList)
+            : calculateMarketEntropy(nextStocks);
+          const themeConsensus = calculateThemeBreadthConsensus(enrichedThemes);
 
           // v41.0 Market Phase Detection
           const phaseResult = detectMarketPhase(
@@ -1128,6 +1202,11 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             nextStocks, 
             phaseRef.current,
             metricsRef.current,
+            {
+              fullMarketEntropy: entropy,
+              themeConsensus,
+              fullMarketSampleSize: marketList.length,
+            },
           );
           const nextPhase = phaseResult.phase;
 
@@ -1543,10 +1622,11 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     metrics, setMetrics, sentimentHistory, phase, phaseHistory, marketEvents, themes,
     addTheme, removeTheme, stocks, addStock, addStocks, updateStock, updateStocks, removeStock,
     journal, setJournal, marketIndices, marketStats, marketThemes, indexTechnicals, refreshData, isMarketOpen, connectionStatus, isSaving,
-    forceRefreshHistory, eventDrivenMode
+    forceRefreshHistory, eventDrivenMode, analyzeLiveStockSignal
   }), [
     metrics, sentimentHistory, phase, phaseHistory, marketEvents, themes, stocks,
-    journal, marketIndices, marketStats, marketThemes, indexTechnicals, isMarketOpen, connectionStatus, isSaving, eventDrivenMode
+    journal, marketIndices, marketStats, marketThemes, indexTechnicals, isMarketOpen, connectionStatus, isSaving, eventDrivenMode,
+    analyzeLiveStockSignal
   ]);
 
   return (
@@ -1588,7 +1668,8 @@ export const useTrading = () => {
       connectionStatus: 'connecting' as const,
       isSaving: false,
       forceRefreshHistory: () => {},
-      eventDrivenMode: null
+      eventDrivenMode: null,
+      analyzeLiveStockSignal: (stock: Stock) => analyzeStockSignal(stock, 'Chaos'),
     } as TradingContextType;
   }
   return context;

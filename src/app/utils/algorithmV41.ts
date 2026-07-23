@@ -17,7 +17,8 @@
 export { 
   detectMarketPhase, 
   calculateMarketTemperature,
-  type PhaseScore 
+  type PhaseScore,
+  type PhaseCrossSectionContext,
 } from './phaseDetection';
 
 // 导出TrapGuard V41

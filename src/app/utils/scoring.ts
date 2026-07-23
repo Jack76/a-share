@@ -1,6 +1,8 @@
 import { Stock, Theme, MarketIndex } from '../types';
 import { calculateAlphaDivergence } from './indicators';
 import { calculateExpectationGapV41, analyzeTrapRiskV41, generateAIPredictionV41 } from './algorithmV41';
+import { calculateTopConceptConsensus } from './marketConcepts';
+export { calculateFullMarketEntropy } from './marketCrossSection';
 
 /**
  * 计算预期差 (Expectation Gap) - v41.0 Wrapper
@@ -552,13 +554,7 @@ export const calculateMarketEntropy = (stocks: Stock[]): number => {
     const stdDev = Math.sqrt(variance);
 
     // 2. 逻辑一致性 (Consistency)
-    const top10 = [...stocks].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0)).slice(0, 10);
-    const concepts = top10.map(s => s.concept).filter(Boolean);
-    const conceptCounts: Record<string, number> = {};
-    concepts.forEach(c => { conceptCounts[c!] = (conceptCounts[c!] || 0) + 1; });
-    const maxConceptCount = Math.max(...Object.values(conceptCounts), 0);
-    
-    const consistency = (maxConceptCount / 10) * 100; // 0-100
+    const consistency = calculateTopConceptConsensus(stocks).consensus * 100;
     
     // 3. 多空撕裂度 (Polarization) - New v6.1
     const limitUps = stocks.filter(s => s.isLimitUp).length;

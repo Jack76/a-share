@@ -1,4 +1,5 @@
 import { Stock, MarketPhase, DailyMetrics, MarketIndex } from "../types";
+import { getChinaTradingClock, type MarketTimestamp } from './marketClock';
 
 /**
  * BLACK SWAN & EUPHORIA CIRCUIT BREAKER V62.1
@@ -156,9 +157,10 @@ export function detectBlackSwan(
   marketIndices: MarketIndex[],
   metrics: DailyMetrics,
   phase: MarketPhase,
+  timestamp: MarketTimestamp = Date.now(),
 ): BlackSwanResult {
   const triggers: BlackSwanTrigger[] = [];
-  const now = Date.now();
+  const now = getChinaTradingClock(timestamp).timestampMs;
 
   // ── 1. Portfolio Stats Calculation ──
   const holdings = stocks.filter(s => s.status === 'Hold');

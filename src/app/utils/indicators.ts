@@ -118,7 +118,8 @@ export const analyzeIntradayStructure = (
 };
 
 export const calculateIndicators = (
-  history: { close: number; high?: number; low?: number; volume?: number }[]
+  history: { close: number; high?: number; low?: number; volume?: number }[],
+  livePrice?: number,
 ): TechnicalIndicators => {
   if (!history || history.length === 0) {
     return {
@@ -182,7 +183,9 @@ export const calculateIndicators = (
   }
 
   // --- v41.0 Advanced Indicators ---
-  const currentPrice = closes[closes.length - 1];
+  const currentPrice = Number.isFinite(livePrice) && (livePrice || 0) > 0
+    ? livePrice as number
+    : closes[closes.length - 1];
   
   // 筹码分布
   const chipDist = calculateChipDistribution(history, currentPrice);

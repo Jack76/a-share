@@ -3696,8 +3696,8 @@ export const FundRadar: React.FC = () => {
       const buildFund = (code: string, rt: any, isEtf: boolean): ExtendedFund | null => {
         if (!rt) return null;
         const hist = historyMap[code] || [];
-        const indicators = calculateIndicators(hist);
         const currentPrice = rt.estimateNetValue || rt.current || rt.currentPrice || 0;
+        const indicators = calculateIndicators(hist, currentPrice);
         const atr = indicators.atr || currentPrice * 0.02 || 0;
         const prediction = predictPriceAction(hist, currentPrice, atr, isEtf ? 10 : 30);
         const getHistPerf = (days: number) => {
@@ -3759,8 +3759,8 @@ export const FundRadar: React.FC = () => {
       const rt = rtData.data?.[code];
       if (!rt) { console.warn(`[FundRadar] loadSingleFund: no RT data for ${code}`); return; }
       const hist = histData[code] || [];
-      const indicators = calculateIndicators(hist);
       const currentPrice = (rt as any).estimateNetValue || (rt as any).current || (rt as any).currentPrice || 0;
+      const indicators = calculateIndicators(hist, currentPrice);
       const atr = indicators.atr || currentPrice * 0.02 || 0;
       const prediction = predictPriceAction(hist, currentPrice, atr, isEtf ? 10 : 30);
       const safeNum = (v: any) => { if (typeof v === "number") return v; if (typeof v === "string") { const p = parseFloat(v); return isNaN(p) ? undefined : p; } return undefined; };

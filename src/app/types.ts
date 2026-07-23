@@ -279,6 +279,9 @@ export interface Stock {
         rawProbability?: number;
         dataQuality?: number;
         reliability?: 'LOW' | 'MEDIUM' | 'HIGH';
+        dataReliability?: 'LOW' | 'MEDIUM' | 'HIGH';
+        evidenceReliability?: 'LOW' | 'MEDIUM' | 'HIGH';
+        calibrationStatus?: 'UNVALIDATED' | 'LIMITED' | 'OUT_OF_SAMPLE';
         sampleSize?: number;
         marketRegime?: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
         marketDataQuality?: number;

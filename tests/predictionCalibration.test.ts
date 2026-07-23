@@ -54,6 +54,9 @@ test('sufficient positive evidence is Bayesian-smoothed instead of copied direct
 
   assert.equal(result.probability, 73);
   assert.equal(result.reliability, 'HIGH');
+  assert.equal(result.dataReliability, 'HIGH');
+  assert.equal(result.evidenceReliability, 'HIGH');
+  assert.equal(result.calibrationStatus, 'OUT_OF_SAMPLE');
 });
 
 test('negative historical expectancy prevents a bullish confidence above 50%', () => {
@@ -82,6 +85,8 @@ test('conflicting signal and predicted direction are downgraded', () => {
   });
 
   assert.equal(result.probability, 50);
+  assert.equal(result.evidenceReliability, 'LOW');
+  assert.equal(result.reliability, 'LOW');
   assert.match(result.warnings.join(' '), /方向预测冲突/);
 });
 

@@ -15,6 +15,7 @@ test('derives board-specific A-share price limits', () => {
   assert.equal(derived('600000', '浦发银行', 11, 10).isLimitUp, true);
   assert.equal(derived('600000', '*ST测试', 10.5, 5).isLimitUp, true);
   assert.equal(derived('300001', '特锐德', 12, 20).isLimitUp, true);
+  assert.equal(derived('sz300001', '特锐德', 12, 20).isLimitUp, true);
   assert.equal(derived('688001', '华兴源创', 8, -20).isLimitDown, true);
   assert.equal(derived('920001', '北交测试', 13, 30).isLimitUp, true);
   assert.equal(derived('430001', '北交测试', 7, -30).isLimitDown, true);

@@ -2,6 +2,7 @@ import type { MarketPhase, Stock } from '../types';
 
 export type PredictionReliability = 'LOW' | 'MEDIUM' | 'HIGH';
 export type MarketRegime = 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
+export type CalibrationStatus = 'UNVALIDATED' | 'LIMITED' | 'OUT_OF_SAMPLE';
 
 export interface MarketCalibrationContext {
   totalCount?: number;
@@ -19,7 +20,7 @@ export interface MarketCalibrationContext {
   isMarketOpen?: boolean;
 }
 
-interface BacktestEvidence {
+export interface BacktestEvidence {
   sampleSize: number;
   winRate: number;
   profitFactor: number;
@@ -42,6 +43,9 @@ export interface PredictionCalibrationResult {
   rawProbability: number;
   dataQuality: number;
   reliability: PredictionReliability;
+  dataReliability: PredictionReliability;
+  evidenceReliability: PredictionReliability;
+  calibrationStatus: CalibrationStatus;
   sampleSize: number;
   marketRegime: MarketRegime;
   marketDataQuality: number;
@@ -52,6 +56,14 @@ export interface ActionablePrediction {
   probability?: number;
   direction?: 'UP' | 'DOWN' | 'SIDEWAYS';
   reliability?: PredictionReliability;
+}
+
+export interface BuySignalGateInput {
+  signalType: 'BUY' | 'SELL' | 'WAIT' | 'HOLD';
+  direction: 'UP' | 'DOWN' | 'SIDEWAYS';
+  probability: number;
+  trapDetected: boolean;
+  backtest?: BacktestEvidence;
 }
 
 const clamp = (value: number, min: number, max: number) =>
@@ -130,6 +142,23 @@ export const isActionableBullishPrediction = (
   (prediction.probability || 0) >= minimumProbability &&
   prediction.reliability !== 'LOW'
 );
+
+export const getBuySignalVetoReason = ({
+  signalType,
+  direction,
+  probability,
+  trapDetected,
+  backtest,
+}: BuySignalGateInput): string | undefined => {
+  if (signalType !== 'BUY') return undefined;
+  if (trapDetected) return '诱多风险检测未通过';
+  if (direction !== 'UP') return '买入信号与方向预测冲突';
+  if (backtest && (backtest.expectancy <= 0 || backtest.profitFactor < 1)) {
+    return '样本外历史代理验证未形成正期望';
+  }
+  if (probability <= 50) return '校准后看涨概率未超过中性线';
+  return undefined;
+};
 
 const calculateDataQuality = (stock: Stock): number => {
   const history = stock.history || [];
@@ -266,11 +295,32 @@ export const calibratePrediction = ({
 
   if (dataQuality < 0.6) warnings.push('历史或实时数据不完整，概率已向50%收缩。');
 
-  let reliability: PredictionReliability = dataQuality >= 0.82 && sampleSize >= 30
+  const combinedDataQuality = marketContext
+    ? Math.min(dataQuality, marketDataQuality)
+    : dataQuality;
+  const dataReliability: PredictionReliability = combinedDataQuality >= 0.8
     ? 'HIGH'
-    : dataQuality >= 0.6 && (sampleSize >= 10 || direction !== 'UP')
+    : combinedDataQuality >= 0.6
       ? 'MEDIUM'
       : 'LOW';
+  const evidenceReliability: PredictionReliability = sampleSize >= 30
+    ? 'HIGH'
+    : sampleSize >= 10
+      ? 'MEDIUM'
+      : 'LOW';
+  const calibrationStatus: CalibrationStatus = sampleSize >= 30
+    ? 'OUT_OF_SAMPLE'
+    : sampleSize >= 10
+      ? 'LIMITED'
+      : 'UNVALIDATED';
+  const reliabilityRank: Record<PredictionReliability, number> = { LOW: 0, MEDIUM: 1, HIGH: 2 };
+  let reliability: PredictionReliability = reliabilityRank[dataReliability] <= reliabilityRank[evidenceReliability]
+    ? dataReliability
+    : evidenceReliability;
+
+  if (evidenceReliability === 'LOW') {
+    warnings.push('历史样本证据不足，不将数据完整度等同于模型有效性。');
+  }
 
   if (marketContext && (marketDataQuality < 0.65 || (marketContext.phaseConfidence ?? 100) < 50)) {
     if (marketDataQuality < 0.4) reliability = 'LOW';
@@ -282,6 +332,9 @@ export const calibratePrediction = ({
     rawProbability: Math.round(raw),
     dataQuality: Math.round(dataQuality * 100),
     reliability,
+    dataReliability,
+    evidenceReliability,
+    calibrationStatus,
     sampleSize,
     marketRegime,
     marketDataQuality: Math.round(marketDataQuality * 100),

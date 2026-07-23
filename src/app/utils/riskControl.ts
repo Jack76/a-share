@@ -50,7 +50,15 @@ export const buildTradeRiskPlan = ({
   phase,
   stock,
 }: TradeRiskInput): TradeRiskPlan | null => {
-  if (!stock || !Number.isFinite(stock.currentPrice) || stock.currentPrice <= 0) return null;
+  if (
+    !stock ||
+    !Number.isFinite(stock.currentPrice) || stock.currentPrice <= 0 ||
+    !Number.isFinite(capital) || capital <= 0 ||
+    !Number.isFinite(riskPercent) ||
+    !Number.isFinite(maxStopLossPercent) ||
+    !Number.isFinite(hedgePercent) ||
+    !Number.isFinite(PHASE_CAPS[phase])
+  ) return null;
 
   const entryPrice = stock.currentPrice;
   const cappedRiskPercent = clamp(riskPercent, 0.25, 2);
@@ -80,14 +88,17 @@ export const buildTradeRiskPlan = ({
   const positionValue = Number((shares * entryPrice).toFixed(2));
   const maxLoss = Number((shares * perShareRisk).toFixed(2));
   const positionPercent = capital > 0 ? Number(((positionValue / capital) * 100).toFixed(2)) : 0;
-  const reasons: string[] = [];
+  const blockers: string[] = [];
 
-  if (phaseCapPercent === 0) reasons.push('当前市场阶段为防守期，禁止新增现金仓位。');
-  if (stock.isLimitUp) reasons.push('涨停封单的实际成交与撤单风险不可控，不按市价追单。');
-  if (riskRewardRatio < 1.5) reasons.push('预估风险回报比低于 1.5，放弃这笔交易。');
-  if (shares < 100) reasons.push('风险预算不足以买入一手，保持空仓。');
-  if (stock.name.includes('ST') || stock.name.includes('*ST')) reasons.push('风险警示证券不纳入默认短线策略。');
-  reasons.push('止损价是事前风险估计，隔夜跳空和 T+1 限制可能导致实际亏损高于估算。');
+  if (phaseCapPercent === 0) blockers.push('当前市场阶段为防守期，禁止新增现金仓位。');
+  if (stock.isLimitUp) blockers.push('涨停封单的实际成交与撤单风险不可控，不按市价追单。');
+  if (riskRewardRatio < 1.5) blockers.push('预估风险回报比低于 1.5，放弃这笔交易。');
+  if (shares < 100) blockers.push('风险预算不足以买入一手，保持空仓。');
+  if (stock.name.includes('ST') || stock.name.includes('*ST')) blockers.push('风险警示证券不纳入默认短线策略。');
+  const reasons = [
+    ...blockers,
+    '止损价是事前风险估计，隔夜跳空和 T+1 限制可能导致实际亏损高于估算。',
+  ];
 
   return {
     entryPrice,
@@ -99,7 +110,7 @@ export const buildTradeRiskPlan = ({
     maxLoss,
     riskRewardRatio,
     phaseCapPercent,
-    canOpen: reasons.length === 1,
+    canOpen: blockers.length === 0,
     reasons,
   };
 };

@@ -396,7 +396,7 @@ export const StockTableRow = React.memo(
                          {prediction.direction === 'DOWN' && <TrendingDown className="w-2.5 h-2.5 text-green-500" />}
                          {prediction.direction === 'SIDEWAYS' && <TrendingUp className="w-2.5 h-2.5 text-slate-400 rotate-45" />}
                          <span className="text-[9px] font-black text-slate-700">
-                            {prediction.probability}% · {prediction.reliability === 'HIGH' ? '高' : prediction.reliability === 'MEDIUM' ? '中' : '低'}
+                            {prediction.probability}% · 数据{prediction.dataReliability === 'HIGH' ? '高' : prediction.dataReliability === 'MEDIUM' ? '中' : '低'}/证据{prediction.evidenceReliability === 'HIGH' ? '高' : prediction.evidenceReliability === 'MEDIUM' ? '中' : '低'}
                          </span>
                      </div>
                      <div className="text-[8px] font-mono text-slate-400" title="Predicted Target">

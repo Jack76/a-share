@@ -12,8 +12,9 @@ import { calculateRealtimeMetrics, RealtimeMetrics } from '../../utils/realtimeA
 import { fetchStockTicks, fetchStockData } from '../../services/marketData';
 import { detectFundIdentity, predictSmashRisk } from '../../utils/fundIntelligence';
 import { calculateOvernightPotential, calculateLimitUpStrength } from '../../utils/scoring';
-import { analyzeStockSignal } from '../../utils/predatorEngine';
 import { isActionableBullishPrediction } from '../../utils/predictionCalibration';
+import { calculateLimitState } from '../../../shared/marketRules';
+import { useTrading } from '../../context/Store';
 
 interface StockDiagnosisDialogProps {
   isOpen: boolean;
@@ -23,6 +24,7 @@ interface StockDiagnosisDialogProps {
 }
 
 export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOpen, onOpenChange, stock: initialStock, phase }) => {
+  const { analyzeLiveStockSignal } = useTrading();
   // V49.7 FIX: INITIALIZE WITH SNAPSHOT METRICS (防止闪烁)
   // Instead of starting with null (which forces Decoy=0), calculate metrics immediately from initialStock.
   // This ensures "Main Force Profit" is stable even before Ticks arrive.
@@ -105,12 +107,8 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                isHeavyVolume: _diagIntraday.volumeStructure?.isHeavy || false,
              } : undefined;
 
-             const liveSignal = analyzeStockSignal(
-                 mergedStock, 
-                 phase, 
-                 undefined, // marketContext
-                 undefined, // sectorContext
-                 [],        // allThemes
+             const liveSignal = analyzeLiveStockSignal(
+                 mergedStock,
                  instantVelocity, // V46.0: Inject Velocity for predictive signaling
                  _diagMicro, // V65.0: microContext (was undefined)
                  {          // intentContext
@@ -136,7 +134,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
     } else {
         setLocalMetrics(null);
     }
-  }, [isOpen, initialStock?.code]);
+  }, [analyzeLiveStockSignal, isOpen, initialStock?.code]);
 
   if (!stock) return null;
 
@@ -146,7 +144,16 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   const high = stock.high || current;
   const low = stock.low || current;
   const prevClose = stock.prevClose || current;
-  const limitUpPrice = stock.limitUpPrice || (prevClose * 1.1);
+  const limitState = calculateLimitState({
+      code: stock.code,
+      name: stock.name,
+      currentPrice: current,
+      previousClose: prevClose,
+      changePercent: stock.changePercent || 0,
+      sourceLimitUpPrice: stock.limitUpPrice,
+      sourceLimitDownPrice: stock.limitDownPrice,
+  });
+  const limitUpPrice = limitState.limitUpPrice;
 
   // --- V15.1 GUILLOTINE DETECTION ---
   const openGap = stock.auctionData?.openGap !== undefined 
@@ -162,7 +169,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
 
   const range = high - low;
   const distToLimitUp = ((limitUpPrice - current) / current) * 100;
-  const isLimitUp = stock.isLimitUp || (Math.abs(distToLimitUp) < 0.1 && stock.changePercent && stock.changePercent > 9);
+  const isLimitUp = stock.isLimitUp || limitState.isLimitUp;
 
   const tech = (stock.technicals || {}) as TechnicalIndicators;
   const ma5 = tech.ma5 || 0;
@@ -1803,7 +1810,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                     if (se.primaryLabel?.includes('筹码峰') || se.scaleInLabel?.includes('筹码峰')) factors.push({ icon: '🏔️', text: '筹码密集峰支撑', color: 'text-purple-600' });
                                     if (se.targetLabel?.includes('筹码峰')) factors.push({ icon: '🏔️', text: '筹码峰阻力压制', color: 'text-amber-600' });
                                     if (se.method?.includes('筹码密集区')) factors.push({ icon: '📊', text: '筹码密集区·等突破', color: 'text-amber-600' });
-                                    if (se.stopLossLabel?.includes('回测止损')) factors.push({ icon: '📈', text: `回测驱动止损`, color: 'text-purple-600' });
+                                    if (se.stopLossLabel?.includes('代理验证止损')) factors.push({ icon: '📈', text: `样本外代理验证止损`, color: 'text-purple-600' });
                                     if (se.method?.includes('历史负期望')) factors.push({ icon: '⚠️', text: '历史负期望信号', color: 'text-red-600' });
                                     
                                     if (factors.length === 0) return null;
@@ -1822,10 +1829,10 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                 })()}
                                 
                                 {/* V60.2: 历史回测统计面板 */}
-                                {se.backtest && se.backtest.sampleSize >= 3 && (
+                                {se.backtest && se.backtest.sampleSize >= 10 && (
                                     <div className="mt-3 p-3 rounded-xl bg-purple-50/60 border border-purple-100/50">
                                         <div className="flex items-center justify-between mb-2">
-                                            <div className="text-[9px] font-black text-purple-400 uppercase tracking-widest">历史回测 ({se.backtest.sampleSize}笔样本)</div>
+                                            <div className="text-[9px] font-black text-purple-400 uppercase tracking-widest">样本外代理验证 ({se.backtest.sampleSize}笔)</div>
                                             <span className={cn("text-[10px] font-black px-2 py-0.5 rounded-full",
                                                 se.backtest.winRate >= 60 ? "bg-emerald-100 text-emerald-700" :
                                                 se.backtest.winRate >= 45 ? "bg-amber-100 text-amber-700" :

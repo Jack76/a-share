@@ -7,9 +7,17 @@ import { calculateStargateLogic } from "./stargateLogic";
 import { getTransmissionSpeed, type TransmissionSpeed, type EventDrivenDetection } from "../data/presetStocks";
 import {
   calibratePrediction,
+  getBuySignalVetoReason,
   type MarketCalibrationContext,
   type PredictionReliability,
+  type CalibrationStatus,
 } from "./predictionCalibration";
+import { calculateLimitState, resolveLimitPercent } from '../../shared/marketRules';
+import { getChinaTradingClock, type MarketTimestamp } from './marketClock';
+
+export interface EngineRuntimeContext {
+  timestamp: MarketTimestamp;
+}
 
 export interface PredatorSignal {
   signalType: "BUY" | "SELL" | "WAIT" | "HOLD";
@@ -66,6 +74,9 @@ export interface PredatorSignal {
     rawProbability?: number;
     dataQuality?: number;
     reliability?: PredictionReliability;
+    dataReliability?: PredictionReliability;
+    evidenceReliability?: PredictionReliability;
+    calibrationStatus?: CalibrationStatus;
     sampleSize?: number;
     marketRegime?: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
     marketDataQuality?: number;
@@ -151,6 +162,7 @@ export const analyzeStockSignal = (
     algoReason?: string;
   },
   eventDrivenContext?: EventDrivenDetection, // V64.0: 事件驱动传导时滞修正
+  runtimeContext?: EngineRuntimeContext,
 ): PredatorSignal => {
   // --- 1. Initialization & DNA Profiling (V13.0) ---
   const current = stock.currentPrice || 0;
@@ -158,7 +170,16 @@ export const analyzeStockSignal = (
   const low = stock.low || current;
   const prevClose = stock.prevClose || current;
   const open = stock.open || prevClose;
-  const limitUpPrice = stock.limitUpPrice || prevClose * 1.1;
+  const limitState = calculateLimitState({
+    code: stock.code,
+    name: stock.name,
+    currentPrice: current,
+    previousClose: prevClose,
+    changePercent: stock.changePercent || 0,
+    sourceLimitUpPrice: stock.limitUpPrice,
+    sourceLimitDownPrice: stock.limitDownPrice,
+  });
+  const limitUpPrice = limitState.limitUpPrice;
   const volume = stock.volume || 0;
 
   // V13.0 DNA Calculation: Elasticity & Personality
@@ -200,10 +221,10 @@ export const analyzeStockSignal = (
   let positionAdvice = ""; // V50.4 Fix: Initialize variable
 
   // --- V10.1 Chronos & Depth (时序与深度修正) ---
-  const now = new Date();
-  const currentHour = now.getHours();
-  const currentMinute = now.getMinutes();
-  const timeVal = currentHour * 100 + currentMinute;
+  const marketClock = getChinaTradingClock(runtimeContext?.timestamp);
+  const currentHour = marketClock.hour;
+  const currentMinute = marketClock.minute;
+  const timeVal = marketClock.timeValue;
 
   // Calculate Valid Trading Minutes Elapsed (China A-Share)
   let minutesElapsed = 240; // Default to full day
@@ -344,9 +365,7 @@ export const analyzeStockSignal = (
   const isAccelerating = ma5 > ma20 && ma20 > ma60;
   const isLimitUp =
     stock.isLimitUp ||
-    (Math.abs((current - limitUpPrice) / limitUpPrice) <
-      0.005 &&
-      (stock.changePercent || 0) > 9.0);
+    limitState.isLimitUp;
   const isLockedAbove = chipPressure > TH_CHIP_LOCK;
   const isBlueSky = profitRatio > 90;
   const isTopDivergence = macdDivergence === "bear";
@@ -507,7 +526,7 @@ export const analyzeStockSignal = (
     const y2Bar = _hist[_hist.length - 2];
     const yClose = yBar.close;
     const yPrevClose = y2Bar.close;
-    
+
     yesterdayWasLimitUp = yPrevClose > 0 && (yClose - yPrevClose) / yPrevClose >= 0.095;
     
     if (yBar.high && yBar.low && yPrevClose > 0) {
@@ -2553,8 +2572,9 @@ export const analyzeStockSignal = (
     
     // ── 信号检测模板 ──
     // 基于当前信号类型,在历史数据中寻找类似形态
+    type TradeSetup = { entryIndex: number; entryPrice: number; localATR: number };
     type TradeResult = { entryPrice: number; exitPrice: number; pctReturn: number; holdDays: number; stopMult: number };
-    const trades: TradeResult[] = [];
+    const setups: TradeSetup[] = [];
     
     // 根据signalTitle识别模式类型
     const titleLower = signalTitle.toLowerCase();
@@ -2619,91 +2639,100 @@ export const analyzeStockSignal = (
       const entryIndex = i + 1;
       const entryPrice = opens[entryIndex];
       if (!Number.isFinite(entryPrice) || entryPrice <= 0) continue;
-      const code = stock.code.replace(/^(sh|sz|bj)/i, '');
-      const limitRate = stock.name.includes('ST') ? 0.05
-        : /^(300|301|688|689)/.test(code) ? 0.20
-          : /^(4|8|92)/.test(code) ? 0.30
-            : 0.10;
+      const limitRate = resolveLimitPercent(stock.code, stock.name);
       const openingGap = c > 0 ? (entryPrice - c) / c : 0;
       // 涨停价开盘的排队成交不可复现，保守地排除这类“纸面盈利”。
       if (openingGap >= limitRate - 0.005) continue;
-      const stopDist = localATR; // 1x ATR止损
-      const slPrice = entryPrice - stopDist * 1.5;
-      const targetPrice = entryPrice + stopDist * 3;
-      
+      setups.push({ entryIndex, entryPrice, localATR });
+
+      // 与最长10日持仓窗口对齐，避免同一标的的回测交易互相重叠。
+      i += 10;
+    }
+
+    // Expanding-window walk-forward prevents a trade from both selecting the
+    // stop and reporting its performance. Ten training and ten validation
+    // trades are the minimum evidence accepted by this proxy backtest.
+    if (setups.length < 20) return null;
+
+    const simulateTrade = (setup: TradeSetup, stopMult: number): TradeResult => {
+      const { entryIndex, entryPrice, localATR } = setup;
+      const slPrice = entryPrice - localATR * stopMult;
+      const targetPrice = entryPrice + localATR * 3;
       let exitPrice = entryPrice;
       let holdDays = 0;
-      let hitStop = false;
-      
-      // A股现金股票买入当日不可卖出，从 entryIndex + 1 开始检查退出。
+
+      // A-share cash equities cannot be sold on the entry day. If stop and
+      // target are both touched intraday, the conservative stop-first order is used.
       for (let j = entryIndex + 1; j < Math.min(entryIndex + 11, closes.length); j++) {
         holdDays = j - entryIndex;
-        const dayLow = lows[j];
-        const dayHigh = highs[j];
-        const dayClose = closes[j];
-        const dayOpen = opens[j];
-        
-        // 跳空越过止损时按开盘成交，避免假设总能以止损价卖出。
-        if (dayOpen <= slPrice) {
-          exitPrice = dayOpen;
-          hitStop = true;
+        if (opens[j] <= slPrice) {
+          exitPrice = opens[j];
           break;
         }
-        if (dayLow <= slPrice) {
+        if (lows[j] <= slPrice) {
           exitPrice = slPrice;
-          hitStop = true;
           break;
         }
-        // V60.3: 用盘中高点检测目标达成
-        if (dayHigh >= targetPrice) {
+        if (highs[j] >= targetPrice) {
           exitPrice = targetPrice;
           break;
         }
-        exitPrice = dayClose; // 到期按收盘退出
+        exitPrice = closes[j];
       }
-      
-      // 预留双边佣金、卖出税费与滑点；具体费率随账户和市场规则变化。
+
       const roundTripCostRate = 0.002;
       const pctReturn = entryPrice > 0
         ? ((exitPrice - entryPrice) / entryPrice - roundTripCostRate) * 100
         : 0;
-      const stopMult = localATR > 0 ? (entryPrice - (hitStop ? exitPrice : slPrice)) / localATR : 1.5;
-      
-      trades.push({ entryPrice, exitPrice, pctReturn, holdDays, stopMult });
-      
-      // 与最长10日持仓窗口对齐，避免同一标的的回测交易互相重叠。
-      i += 10;
+      return { entryPrice, exitPrice, pctReturn, holdDays, stopMult };
+    };
+
+    const summarize = (trades: TradeResult[]) => {
+      const wins = trades.filter(trade => trade.pctReturn > 0);
+      const losses = trades.filter(trade => trade.pctReturn <= 0);
+      const totalWin = wins.reduce((sum, trade) => sum + trade.pctReturn, 0);
+      const totalLoss = Math.abs(losses.reduce((sum, trade) => sum + trade.pctReturn, 0));
+      return {
+        winRate: trades.length > 0 ? (wins.length / trades.length) * 100 : 0,
+        avgWinPct: wins.length > 0 ? totalWin / wins.length : 0,
+        avgLossPct: losses.length > 0 ? totalLoss / losses.length : 0,
+        profitFactor: totalLoss > 0 ? totalWin / totalLoss : totalWin > 0 ? 99 : 0,
+        expectancy: trades.length > 0
+          ? trades.reduce((sum, trade) => sum + trade.pctReturn, 0) / trades.length
+          : 0,
+      };
+    };
+
+    const stopCandidates = [1, 1.25, 1.5, 1.75, 2, 2.5];
+    const chooseOptimalStop = (trainingSetups: TradeSetup[]) => stopCandidates
+        .map(stopMult => ({
+          stopMult,
+          stats: summarize(trainingSetups.map(setup => simulateTrade(setup, stopMult))),
+        }))
+        .sort((a, b) =>
+          b.stats.expectancy - a.stats.expectancy ||
+          b.stats.profitFactor - a.stats.profitFactor ||
+          a.stopMult - b.stopMult
+        )[0].stopMult;
+
+    // Expanding-window walk-forward: each reported trade is evaluated with a
+    // stop selected only from setups that occurred before it.
+    const validationTrades: TradeResult[] = [];
+    for (let index = 10; index < setups.length; index++) {
+      const walkForwardStop = chooseOptimalStop(setups.slice(0, index));
+      validationTrades.push(simulateTrade(setups[index], walkForwardStop));
     }
-    
-    if (trades.length < 10) return null;
-    
-    const wins = trades.filter(t => t.pctReturn > 0);
-    const losses = trades.filter(t => t.pctReturn <= 0);
-    const winRate = (wins.length / trades.length) * 100;
-    const avgWinPct = wins.length > 0 ? wins.reduce((s, t) => s + t.pctReturn, 0) / wins.length : 0;
-    const avgLossPct = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.pctReturn, 0) / losses.length) : 0;
-    const totalWin = wins.reduce((s, t) => s + t.pctReturn, 0);
-    const totalLoss = Math.abs(losses.reduce((s, t) => s + t.pctReturn, 0)) || 1;
-    const profitFactor = totalWin / totalLoss;
-    const expectancy = trades.reduce((s, t) => s + t.pctReturn, 0) / trades.length;
-    
-    // 最优止损倍数：取盈利交易的止损倍数中位数
-    const sortedStops = trades
-      .filter(t => t.pctReturn > 0)
-      .map(t => t.stopMult)
-      .sort((a, b) => a - b);
-    const optimalStopMult = sortedStops.length > 0
-      ? sortedStops[Math.floor(sortedStops.length / 2)]
-      : 1.5;
-    
+    const optimalStopMult = chooseOptimalStop(setups);
+    const validation = summarize(validationTrades);
+
     return {
-      sampleSize: trades.length,
-      winRate: Math.round(winRate * 10) / 10,
-      avgWinPct: Math.round(avgWinPct * 100) / 100,
-      avgLossPct: Math.round(avgLossPct * 100) / 100,
+      sampleSize: validationTrades.length,
+      winRate: Math.round(validation.winRate * 10) / 10,
+      avgWinPct: Math.round(validation.avgWinPct * 100) / 100,
+      avgLossPct: Math.round(validation.avgLossPct * 100) / 100,
       optimalStopMult: Math.round(optimalStopMult * 100) / 100,
-      profitFactor: Math.round(profitFactor * 100) / 100,
-      expectancy: Math.round(expectancy * 100) / 100,
+      profitFactor: Math.round(validation.profitFactor * 100) / 100,
+      expectancy: Math.round(validation.expectancy * 100) / 100,
     };
   };
 
@@ -2788,19 +2817,18 @@ export const analyzeStockSignal = (
     const chipPeaks = _calcChipPeaks();
     const backtestResult = _backtestHistory();
     
-    // V60.2: 回测数据覆写静态止损profile
-    // 如果回测样本≥5且最优止损倍数有效,用实测数据替代经验值
-    if (backtestResult && backtestResult.sampleSize >= 5 && backtestResult.optimalStopMult > 0.5) {
+    // Walk-forward样本外代理验证覆写静态止损 profile。
+    if (backtestResult && backtestResult.sampleSize >= 10 && backtestResult.optimalStopMult > 0.5) {
       stopProfile.atrMult = backtestResult.optimalStopMult;
       // 如果回测胜率高(>60%),可收紧最大止损%; 胜率低(<40%),放宽止损
       if (backtestResult.winRate > 60) {
         stopProfile.maxPct = Math.max(0.03, stopProfile.maxPct * 0.85);
-        stopProfile.label = `回测止损(胜率${backtestResult.winRate.toFixed(0)}%·${backtestResult.sampleSize}样本)`;
+        stopProfile.label = `代理验证止损(胜率${backtestResult.winRate.toFixed(0)}%·${backtestResult.sampleSize}样本)`;
       } else if (backtestResult.winRate < 40) {
         stopProfile.maxPct = Math.min(0.10, stopProfile.maxPct * 1.25);
-        stopProfile.label = `回测止损(胜率${backtestResult.winRate.toFixed(0)}%·宽防护)`;
+        stopProfile.label = `代理验证止损(胜率${backtestResult.winRate.toFixed(0)}%·宽防护)`;
       } else {
-        stopProfile.label = `回测止损(胜率${backtestResult.winRate.toFixed(0)}%·${backtestResult.sampleSize}样本)`;
+        stopProfile.label = `代理验证止损(胜率${backtestResult.winRate.toFixed(0)}%·${backtestResult.sampleSize}样本)`;
       }
     }
     
@@ -3249,9 +3277,31 @@ export const analyzeStockSignal = (
     backtest: smartEntry?.backtest,
     marketContext,
   });
+
+  const buySignalVetoReason = getBuySignalVetoReason({
+    signalType,
+    direction: expectedDirection,
+    probability: calibratedPrediction.probability,
+    trapDetected: pipeline.trapDetected,
+    backtest: smartEntry?.backtest,
+  });
+  if (buySignalVetoReason) {
+    signalType = 'WAIT';
+    signalTitle = '风险校准否决 (WAIT)';
+    adviceText = `[买入否决] ${buySignalVetoReason}。保持空仓，等待新的正期望证据。`;
+    positionAdvice = '空仓观望 (Wait)';
+    recommendedBuy = 0;
+    trend = 'Neutral';
+    if (smartEntry) {
+      smartEntry.primary = 0;
+      smartEntry.scaleIn = 0;
+      smartEntry.urgency = 'NO_ENTRY';
+      smartEntry.method = `暂停买入：${buySignalVetoReason}`;
+    }
+  }
   
   // V60.0: Update recommendedBuy to use smart entry primary price
-  if (smartEntry && smartEntry.primary > 0 && smartEntry.urgency !== 'NO_ENTRY') {
+  if (!buySignalVetoReason && smartEntry && smartEntry.primary > 0 && smartEntry.urgency !== 'NO_ENTRY') {
     recommendedBuy = smartEntry.primary;
   }
 
@@ -3295,6 +3345,9 @@ export const analyzeStockSignal = (
       rawProbability: calibratedPrediction.rawProbability,
       dataQuality: calibratedPrediction.dataQuality,
       reliability: calibratedPrediction.reliability,
+      dataReliability: calibratedPrediction.dataReliability,
+      evidenceReliability: calibratedPrediction.evidenceReliability,
+      calibrationStatus: calibratedPrediction.calibrationStatus,
       sampleSize: calibratedPrediction.sampleSize,
       marketRegime: calibratedPrediction.marketRegime,
       marketDataQuality: calibratedPrediction.marketDataQuality,
@@ -3324,126 +3377,6 @@ export const analyzeStockSignal = (
       t1Action,
     },
   };
-};
-
-/**
- * V7.1 Trap Assessment Engine
- * Calculates real-time Trap Risk Score (0-100) and identifies specific trap signals.
- */
-export const calculateTrapRisk = (
-  stock: Stock,
-): {
-  score: number;
-  signals: NonNullable<Stock["trapSignals"]>;
-} => {
-  let score = 0;
-  const signals: NonNullable<Stock["trapSignals"]> = [];
-
-  const current = stock.currentPrice || 0;
-  const high = stock.high || current;
-  const open = stock.open || current;
-  const prevClose = stock.prevClose || current;
-  const tech = (stock.technicals || {}) as any;
-
-  // V8.3 Role-Based Sensitivity (角色敏感度校准)
-  // 中军/龙头享有"宽容度"，杂毛/跟风必须"严打"
-  let riskSensitivity = 1.0;
-  if (stock.role === "Dragon") riskSensitivity = 0.6; // 龙头容许高分歧
-  if (stock.role === "Main") riskSensitivity = 0.8; // 中军容许磨叽洗盘
-  if (stock.role === "Follower") riskSensitivity = 1.2; // 杂毛任何异常都是雷
-
-  // 1. Sickle Trap (镰刀陷阱)
-  const upperShadowRatio =
-    prevClose > 0 ? (high - current) / prevClose : 0;
-  // 修正：对于中军，3-4%的上影线可能是正常的试盘/洗盘，不一定是出货
-  const sickleThreshold = stock.role === "Main" ? 0.05 : 0.04;
-  if (upperShadowRatio > sickleThreshold && current < open) {
-    score += 40 * riskSensitivity;
-    signals.push({
-      type: "LateDayPull",
-      severity: "High",
-      description: `长上影线杀跌 ${(upperShadowRatio * 100).toFixed(1)}%，主力出货嫌疑极大`,
-    });
-  }
-
-  // 2. Morning Gap Trap (竞价陷阱)
-  const openGap =
-    prevClose > 0 ? (open - prevClose) / prevClose : 0;
-  if (
-    openGap > 0.03 &&
-    current < open &&
-    current < high * 0.98
-  ) {
-    score += 35 * riskSensitivity;
-    signals.push({
-      type: "FakeBreakthrough",
-      severity: "High",
-      description: "高开低走超 3%，典型竞价诱多",
-    });
-  }
-
-  // 3. Chip Trap (筹码陷阱)
-  // 修正：中军通常顶着套牢盘走，只要趋势没坏，不算严重诱多
-  const chipThreshold = stock.role === "Main" ? 90 : 80;
-  if (
-    tech.chipPressure &&
-    tech.chipPressure > chipThreshold &&
-    (stock.changePercent || 0) > 2
-  ) {
-    score += 30 * (stock.role === "Main" ? 0.5 : 1.0); // 中军对此项风险减半
-    signals.push({
-      type: "Exhaustion",
-      severity: "Medium",
-      description: `上方套牢盘 ${tech.chipPressure.toFixed(0)}%，强行拉升诱多`,
-    });
-  }
-
-  // 4. Divergence Trap (背离陷阱)
-  if (tech.macdDivergence === "bear") {
-    score += 45; // 背离是硬伤，任何角色都不能赦免
-    signals.push({
-      type: "Divergence",
-      severity: "High",
-      description: "MACD 顶背离，股价新高但动能衰竭",
-    });
-  }
-
-  // 5. Volume Churn (量能陷阱)
-  // High Turnover but Price Stagnant or Dropping
-  // 修正：中军体量大，20%换手是正常活跃；杂毛20%就是出货
-  // 5. Volume Churn (量能陷阱) - Relative to History
-  // Logic: Turnover is 3x higher than average but price is stagnant (<1%)
-  // This indicates "Churning" (Main force selling to Retail)
-  const turnoverMA5 = tech.turnoverMA5 || 5; // Default fallback
-  const turnoverRatio =
-    turnoverMA5 > 0
-      ? (stock.turnoverRate || 0) / turnoverMA5
-      : 0;
-
-  // Default threshold: 25% absolute OR 3.0x relative
-  // For 'Main' stocks (Large Cap), 15% absolute is already dangerous
-  const absThreshold = stock.role === "Main" ? 15 : 25;
-  const relThreshold = stock.role === "Main" ? 2.5 : 3.5;
-
-  const isChurning =
-    (stock.turnoverRate || 0) > absThreshold ||
-    (turnoverRatio > relThreshold &&
-      (stock.turnoverRate || 0) > 8);
-
-  if (
-    isChurning &&
-    (stock.changePercent || 0) < 1.5 &&
-    !stock.isLimitUp
-  ) {
-    score += 30 * riskSensitivity;
-    signals.push({
-      type: "VolumeDivergence",
-      severity: "Medium",
-      description: `爆量滞涨 (换手${(stock.turnoverRate || 0).toFixed(1)}% / 量比${turnoverRatio.toFixed(1)})，主力对倒出货`,
-    });
-  }
-
-  return { score: Math.min(100, score), signals };
 };
 
 /**
