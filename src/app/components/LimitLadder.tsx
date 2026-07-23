@@ -155,8 +155,8 @@ export const LimitLadder: React.FC<Props> = ({ stocks, marketTemp = 50 }) => {
                                         {/* Hover Tooltip (Simulated) */}
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-3 bg-slate-900 text-white rounded-2xl opacity-0 group-hover/stock:opacity-100 transition-opacity z-50 pointer-events-none shadow-2xl border border-white/10">
                                             <div className="flex items-center justify-between mb-2">
-                                                <span className="text-[9px] font-black text-white/40 uppercase tracking-widest">诚意度评分</span>
-                                                <span className="text-xs font-black text-red-400">{stock.moneyQualityScore || 85}%</span>
+                                                <span className="text-[9px] font-black text-white/40 uppercase tracking-widest">量价质量</span>
+                                                <span className="text-xs font-black text-red-400">{stock.moneyQualityScore?.toFixed(0) || '--'}</span>
                                             </div>
                                             <div className="grid grid-cols-2 gap-2 mb-2">
                                                 <div className="bg-white/5 p-1 rounded-lg">

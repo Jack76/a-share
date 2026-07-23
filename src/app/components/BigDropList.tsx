@@ -4,6 +4,8 @@ import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Skull, TrendingDown, AlertOctagon, ArrowDown, Sparkles, Gem, Activity } from 'lucide-react';
 import { cn } from './ui/utils';
+import { assessCapitalFlow } from '../utils/capitalFlow';
+import { isActionableBullishPrediction } from '../utils/predictionCalibration';
 
 interface Props {
   stocks: Stock[];
@@ -30,14 +32,17 @@ export const BigDropList: React.FC<Props> = React.memo(({ stocks, onSelect }) =>
       // 2. Trend Protection (Optional check if tech exists)
       // Assuming trend is generally up if it's a Leader
       
-      // 3. Divergence: Price Drop but Money In OR Shrinking Volume
-      // MainForceInflow > 0 means smart money is fighting the drop
-      const isMoneyIn = (stock.mainForceInflow || 0) > 0;
+      // 3. Divergence must be supported by a vendor-reported large-order inflow.
+      const capitalFlow = assessCapitalFlow(stock);
+      const isMoneyIn =
+        capitalFlow.signal === 'DIRECT_INFLOW' ||
+        capitalFlow.signal === 'CONFIRMED_INFLOW';
       
       // 4. Shrinking Volume (Turnover < 10% for a Leader is considered 'locking')
       const isShrinking = (stock.turnoverRate || 0) < 15 && (stock.turnoverRate || 0) > 0;
       
-      return isCore && (isMoneyIn || isShrinking) && !stock.isLimitDown;
+      const hasEvidence = isActionableBullishPrediction(stock.aiPrediction?.prediction);
+      return isCore && isMoneyIn && isShrinking && hasEvidence && !stock.isLimitDown;
   };
 
   const hasGoldenPit = dropStocks.some(s => isGoldenPit(s));
@@ -86,7 +91,7 @@ export const BigDropList: React.FC<Props> = React.memo(({ stocks, onSelect }) =>
                                     <span className="text-[9px] font-mono text-slate-400">{stock.code}</span>
                                     {isPit && (
                                         <span className="text-[8px] font-bold text-amber-600 bg-amber-50 px-1 rounded scale-90 origin-left">
-                                            {(stock.mainForceInflow || 0) > 0 ? '主力净流入' : '缩量洗盘'}
+                                            大单净流入 · 证据通过
                                         </span>
                                     )}
                                 </div>

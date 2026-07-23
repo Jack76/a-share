@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { cn } from "./ui/utils";
 import { Progress } from "./ui/progress";
 import { projectId, publicAnonKey } from '../../../utils/supabase/info';
+import { isActionableBullishPrediction } from '../utils/predictionCalibration';
 
 // V67.3: Board type detection for risk awareness (20% limit boards)
 function getBoardType(code: string): { label: string; color: string } | null {
@@ -37,7 +38,8 @@ export function DragonScanner() {
     const tacticalOpportunities = stocks.filter(s => {
         const trend = s.aiPrediction?.trend;
         const isWeakToStrong = s.aiPrediction?.summary.includes('弱转强');
-        return (trend === 'Accelerate' || trend === 'Rebound' || isWeakToStrong) && 
+        return (trend === 'Accelerate' || trend === 'Rebound' || isWeakToStrong) &&
+               isActionableBullishPrediction(s.aiPrediction?.prediction) &&
                s.status === 'Watch' && 
                s.aiPrediction?.buyPoint;
     }).sort((a, b) => {
@@ -64,7 +66,7 @@ export function DragonScanner() {
                         body: JSON.stringify({
                             signalType: "ASSAULT",
                             winRate: stock.strengthScore || 50,
-                            alpha: (stock.moneyQualityScore || 50) - 50, // Approx Alpha from score center 50
+                            alpha: stock.technicals?.alpha || 0,
                             trapGuard: (stock.trapSignals?.length || 0) * 15, // Approx trap probability
                             volumeRatio: stock.volumeRatio || 1.0
                         })
@@ -261,7 +263,7 @@ export function DragonScanner() {
                                                 </Badge>
                                                 {stock.moneyQualityScore && stock.moneyQualityScore > 75 && (
                                                     <Badge className="text-[8px] h-3.5 px-1 bg-blue-50 text-blue-600 border border-blue-100 font-bold">
-                                                        Alpha买入 {stock.moneyQualityScore.toFixed(0)}
+                                                        量价质量 {stock.moneyQualityScore.toFixed(0)}
                                                     </Badge>
                                                 )}
                                                 {stock.sealIntensity && stock.sealIntensity > 80 && (

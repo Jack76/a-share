@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Zap, Activity, ShieldCheck, Flame, Target, TrendingUp, BarChart3 } from 'lucide-react';
 import { cn } from './ui/utils';
+import { getDirectLargeOrderNetYuan } from '../utils/capitalFlow';
 
 interface Props {
   metrics: any;
@@ -145,7 +146,7 @@ export const QuantitativeBattleReport: React.FC<Props> = ({ metrics, phase, stoc
                       // Filter: Rebound candidates or Resilience
                       displayStocks = stocks
                           .filter(s => s.aiPrediction?.trend === 'Rebound' || (s.changePercent || 0) > 0)
-                          .sort((a, b) => (b.mainForceInflow || 0) - (a.mainForceInflow || 0))
+                          .sort((a, b) => (getDirectLargeOrderNetYuan(b) || 0) - (getDirectLargeOrderNetYuan(a) || 0))
                           .slice(0, 5);
                   } else {
                       // Default / Chaos

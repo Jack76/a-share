@@ -44,6 +44,8 @@ export interface PredictionCalibrationResult {
   dataQuality: number;
   reliability: PredictionReliability;
   dataReliability: PredictionReliability;
+  marketDataReliability: PredictionReliability;
+  marketDataStatus?: 'FRESH' | 'PARTIAL' | 'STALE' | 'UNAVAILABLE';
   evidenceReliability: PredictionReliability;
   calibrationStatus: CalibrationStatus;
   sampleSize: number;
@@ -153,6 +155,7 @@ export const getBuySignalVetoReason = ({
   if (signalType !== 'BUY') return undefined;
   if (trapDetected) return '诱多风险检测未通过';
   if (direction !== 'UP') return '买入信号与方向预测冲突';
+  if (!backtest || backtest.sampleSize < 10) return '有效样本不足10笔，禁止输出买入结论';
   if (backtest && (backtest.expectancy <= 0 || backtest.profitFactor < 1)) {
     return '样本外历史代理验证未形成正期望';
   }
@@ -295,12 +298,14 @@ export const calibratePrediction = ({
 
   if (dataQuality < 0.6) warnings.push('历史或实时数据不完整，概率已向50%收缩。');
 
-  const combinedDataQuality = marketContext
-    ? Math.min(dataQuality, marketDataQuality)
-    : dataQuality;
-  const dataReliability: PredictionReliability = combinedDataQuality >= 0.8
+  const dataReliability: PredictionReliability = dataQuality >= 0.8
     ? 'HIGH'
-    : combinedDataQuality >= 0.6
+    : dataQuality >= 0.6
+      ? 'MEDIUM'
+      : 'LOW';
+  const marketDataReliability: PredictionReliability = marketDataQuality >= 0.8
+    ? 'HIGH'
+    : marketDataQuality >= 0.6
       ? 'MEDIUM'
       : 'LOW';
   const evidenceReliability: PredictionReliability = sampleSize >= 30
@@ -317,6 +322,9 @@ export const calibratePrediction = ({
   let reliability: PredictionReliability = reliabilityRank[dataReliability] <= reliabilityRank[evidenceReliability]
     ? dataReliability
     : evidenceReliability;
+  if (marketContext && reliabilityRank[marketDataReliability] < reliabilityRank[reliability]) {
+    reliability = marketDataReliability;
+  }
 
   if (evidenceReliability === 'LOW') {
     warnings.push('历史样本证据不足，不将数据完整度等同于模型有效性。');
@@ -333,6 +341,14 @@ export const calibratePrediction = ({
     dataQuality: Math.round(dataQuality * 100),
     reliability,
     dataReliability,
+    marketDataReliability,
+    marketDataStatus: marketContext?.dataStatus || (marketContext
+      ? marketDataQuality >= 0.8
+        ? 'FRESH'
+        : marketDataQuality >= 0.55
+          ? 'PARTIAL'
+          : 'UNAVAILABLE'
+      : undefined),
     evidenceReliability,
     calibrationStatus,
     sampleSize,

@@ -30,6 +30,10 @@ import {
 } from "lucide-react";
 import { Stock, MarketPhase } from "../../types";
 import { isActionableBullishPrediction } from "../../utils/predictionCalibration";
+import {
+  assessCapitalFlow,
+  formatCapitalFlowYuan,
+} from "../../utils/capitalFlow";
 
 // V67.3: Board type detection for risk awareness (创业板/科创板 = 20% limit)
 function getBoardType(code: string): { label: string; shortLabel: string; color: string } | null {
@@ -70,6 +74,11 @@ export const StockTableRow = React.memo(
     // V17.5: RSI Passivation Logic (The "Dragon Pass")
     // High RSI (>85) + High Alpha (>15) = Ignore Overbought, Signal Strong Momentum
     const rsi = stock.technicals?.rsi || 0;
+    const capitalFlow = assessCapitalFlow(stock);
+    const directNetYuan = capitalFlow.directNetYuan;
+    const isDirectInflow =
+      capitalFlow.signal === "DIRECT_INFLOW" ||
+      capitalFlow.signal === "CONFIRMED_INFLOW";
     const isDragonPass = rsi > 85 && alphaScore > 65; // independenceScore is 0-100, assuming >65 is High Alpha equivalent to user's "19.3" (context dependent, but 65 is high relative) 
     // Wait, user said "Alpha 19.3". Usually Alpha is a specific value. 
     // In this app's "independenceScore", usually 0-100. 
@@ -114,14 +123,11 @@ export const StockTableRow = React.memo(
         score += 25; // Bonus for hidden accumulation
     }
 
-    // 3. Main Force & Flow (Truth)
-    if (stock.mainForceInflow !== undefined) {
-      if (stock.mainForceInflow > 10) score += 15;
-      else if (stock.mainForceInflow < -10) score -= 20;
-    } else {
-      const flowQuality = stock.moneyQualityScore || 50;
-      if (flowQuality > 75) score += 15;
-      if (flowQuality < 30) score -= 20;
+    // 3. Vendor-reported large-order net flow. OHLCV pressure never substitutes it.
+    if (directNetYuan !== undefined) {
+      if (directNetYuan > 10_000_000) score += 15;
+      else if (directNetYuan < -10_000_000) score -= 20;
+      if (capitalFlow.signal === "CONFLICT") score -= 10;
     }
 
     // 4. Risk Control
@@ -144,7 +150,6 @@ export const StockTableRow = React.memo(
     // Identify Core Assets in Shrinking Pullback
     const isCore = ['Leader', 'Vice', 'Main'].includes(stock.role);
     const isDrop = (stock.changePercent || 0) < -3 && !stock.isLimitDown;
-    const isMoneyIn = (stock.mainForceInflow || 0) > 0;
     const isShrinking = (stock.turnoverRate || 0) < 15;
     
     // V17.2: Enhanced Sector & Confidence Check
@@ -155,7 +160,7 @@ export const StockTableRow = React.memo(
     // 60% is a gamble, not a pattern lock.
     const isHighConfidence = isActionableBullishPrediction(stock.aiPrediction?.prediction);
 
-    const isGoldenPit = isCore && isDrop && isMoneyIn && isShrinking && isSectorSafe && isHighConfidence;
+    const isGoldenPit = isCore && isDrop && isDirectInflow && isShrinking && isSectorSafe && isHighConfidence;
     
     if (isGoldenPit) {
         score += 20; // Rebound potential
@@ -213,7 +218,7 @@ export const StockTableRow = React.memo(
         }
       }
       // Priority 1.1: Pump & Dump (Trap)
-      else if ((stock.changePercent || 0) > 5 && (stock.mainForceInflow || 0) < -10) {
+      else if ((stock.changePercent || 0) > 5 && (directNetYuan || 0) < -10_000_000) {
            badgeText = "诱多 TRAP";
            badgeClass = "bg-purple-900 text-purple-100 border border-purple-500 animate-pulse font-black shadow-[0_0_10px_rgba(168,85,247,0.5)]";
            icon = <UserMinus className="w-3 h-3 mr-1" />;
@@ -396,7 +401,7 @@ export const StockTableRow = React.memo(
                          {prediction.direction === 'DOWN' && <TrendingDown className="w-2.5 h-2.5 text-green-500" />}
                          {prediction.direction === 'SIDEWAYS' && <TrendingUp className="w-2.5 h-2.5 text-slate-400 rotate-45" />}
                          <span className="text-[9px] font-black text-slate-700">
-                            {prediction.probability}% · 数据{prediction.dataReliability === 'HIGH' ? '高' : prediction.dataReliability === 'MEDIUM' ? '中' : '低'}/证据{prediction.evidenceReliability === 'HIGH' ? '高' : prediction.evidenceReliability === 'MEDIUM' ? '中' : '低'}
+                            {prediction.probability}% · 个股{prediction.dataReliability === 'HIGH' ? '高' : prediction.dataReliability === 'MEDIUM' ? '中' : '低'} · 市场{prediction.marketDataStatus === 'FRESH' ? '完整' : prediction.marketDataStatus === 'PARTIAL' ? '部分' : prediction.marketDataStatus === 'STALE' ? '过期' : '缺失'} · 证据{prediction.sampleSize || 0}笔
                          </span>
                      </div>
                      <div className="text-[8px] font-mono text-slate-400" title="Predicted Target">
@@ -498,7 +503,7 @@ export const StockTableRow = React.memo(
               <div className="w-px h-2 bg-slate-200" />
               <div
                 className="flex items-center gap-0.5"
-                title={`资金诚意: ${moneyQuality.toFixed(0)}%`}
+                title={`量价质量: ${moneyQuality.toFixed(0)}%`}
               >
                 <ShieldCheck className="w-2.5 h-2.5 text-slate-400" />
                 <span
@@ -684,10 +689,13 @@ export const StockTableRow = React.memo(
                 style={{ width: `${score}%` }}
               />
             </div>
-            {/* Hunter V5.0 Flow Indicator */}
-            {stock.mainForceInflow !== undefined && (
-              <div className="flex items-center gap-1 mt-0.5">
-                {stock.mainForceInflow > 0 ? (
+            {/* Vendor large-order net; volume-price proxy is only a confirmation flag. */}
+            {directNetYuan !== undefined ? (
+              <div
+                className="flex items-center gap-1 mt-0.5"
+                title={`大单净额（东方财富 f62）${capitalFlow.signal === "CONFLICT" ? "；与5日量价压力方向冲突" : ""}`}
+              >
+                {directNetYuan > 0 ? (
                   <TrendingUp className="w-2.5 h-2.5 text-red-500" />
                 ) : (
                   <TrendingDown className="w-2.5 h-2.5 text-green-500" />
@@ -695,13 +703,23 @@ export const StockTableRow = React.memo(
                 <span
                   className={cn(
                     "text-[9px] font-mono font-black",
-                    stock.mainForceInflow > 0
+                    directNetYuan > 0
                       ? "text-red-500"
                       : "text-green-500",
                   )}
                 >
-                  {Math.abs(stock.mainForceInflow).toFixed(1)}M
+                  大单 {formatCapitalFlowYuan(directNetYuan)}
                 </span>
+                {capitalFlow.signal === "CONFLICT" && (
+                  <span className="text-[8px] font-black text-amber-600">冲突</span>
+                )}
+              </div>
+            ) : (
+              <div
+                className="text-[8px] font-bold text-slate-400 mt-0.5"
+                title={capitalFlow.signal === "PROXY_ONLY" ? "仅有量价代理，不能视为大单净额" : "未获得大单净额"}
+              >
+                大单缺失
               </div>
             )}
           </div>
@@ -876,7 +894,8 @@ export const StockTableRow = React.memo(
     if (ps.status !== ns.status) return false;
     if (ps.trapRiskScore !== ns.trapRiskScore) return false;
     if (ps.turnoverRate !== ns.turnoverRate) return false;
-    if (ps.mainForceInflow !== ns.mainForceInflow) return false;
+    if (ps.largeOrderNetYuan !== ns.largeOrderNetYuan) return false;
+    if (ps.mainMoneyIn !== ns.mainMoneyIn) return false;
     if (ps.stargate?.gateLevel !== ns.stargate?.gateLevel) return false;
     if (ps.aiPrediction?.summary !== ns.aiPrediction?.summary) return false;
     if (ps.aiPrediction?.winRate !== ns.aiPrediction?.winRate) return false;

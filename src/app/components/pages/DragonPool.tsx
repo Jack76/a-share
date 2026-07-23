@@ -26,57 +26,7 @@ import { StockTableRow } from './StockTableRow';
 import { StockMobileCard } from './StockMobileCard';
 import { PRESET_THEMES } from '../../data/presetStocks';
 import { isActionableBullishPrediction } from '../../utils/predictionCalibration';
-
-
-// --- HELPER: Calculate Net Inflow from History (Enhanced V7.0) ---
-const calculateNetInflow = (history: any[]) => {
-    if (!history || history.length < 2) return 0;
-    
-    // Analyze last 5 days (Expanded from 3)
-    const recent = history.slice(-5);
-    let netFlow = 0;
-    let totalWeight = 0;
-    
-    recent.forEach((day, index) => {
-        const { open, close, high, low, volume } = day;
-        if (!volume) return;
-        
-        // Time Decay Weight (Recent days matter more)
-        // Index 0 (Oldest) -> Weight 1.0
-        // Index 4 (Newest) -> Weight 2.0
-        const weight = 1.0 + (index * 0.25);
-        totalWeight += weight;
-
-        // 1. Chaikin Money Flow Multiplier (Enhanced)
-        // If Limit Up (High=Low=Close > Open), treat as Max Buy (1.0)
-        // If Limit Down (High=Low=Close < Open), treat as Max Sell (-1.0)
-        let multiplier = 0;
-        const range = high - low;
-        
-        if (range === 0) {
-            if (close > open) multiplier = 1.0; // Limit Up (One Word)
-            else if (close < open) multiplier = -1.0; // Limit Down
-            else multiplier = 0;
-        } else {
-            // Standard CMF: ((C-L) - (H-C)) / (H-L)
-            // This measures where the close is within the range
-            multiplier = ((close - low) - (high - close)) / range;
-        }
-        
-        // 2. Volume Force
-        // Correction v42.1: A-Share Volume is in 'Hands' (100 shares)
-        // Previous logic missed the * 100 multiplier, causing 100x undervaluation
-        const avgPrice = (open + close + high + low) / 4;
-        const amount = volume * 100 * avgPrice; 
-        
-        // 3. Weighted Flow
-        netFlow += (amount * multiplier * weight);
-    });
-    
-    // Normalize (Average Weighted Flow per day)
-    // Result / 1,000,000 for Millions (CNY)
-    return Math.round((netFlow / totalWeight) / 1000000); 
-};
+import { assessCapitalFlow, getDirectLargeOrderNetYuan } from '../../utils/capitalFlow';
 
 // V65.0: analyzeIntradayStructure now runs in Store pipeline, DragonPool reads pre-computed stock.intradayIndicators
 
@@ -133,7 +83,7 @@ export const DragonPool: React.FC = () => {
           volumeRatio: intraday?.volumeStructure?.avgVol5
             ? intraday.volumeStructure.lastVol / intraday.volumeStructure.avgVol5
             : (stock.auctionData?.volumeRatio || stock.volumeRatio),
-          netInflow: stock.mainForceInflow,
+          largeOrderNetYuan: getDirectLargeOrderNetYuan(stock),
           isHeavyVolume: intraday?.volumeStructure?.isHeavy || false,
         };
 
@@ -207,90 +157,6 @@ export const DragonPool: React.FC = () => {
     });
   }, [stocks]);
 
-  // Background Job: Calculate Real Inflow for stocks lacking it
-  useEffect(() => {
-      const targets = stocks.filter(s => s.mainForceInflow === 0 && !processedRef.current.has(s.id));
-      if (targets.length === 0) return;
-
-      const codes = targets.map(s => s.code);
-      // Mark as processed to prevent loops
-      targets.forEach(s => processedRef.current.add(s.id));
-
-      const fetchFlow = async () => {
-          try {
-              const historyMap = await fetchStockHistoryBatch(codes);
-              // V65.1 PERF: Batch all updates into one call (was: individual updateStock per stock → O(n) full recalcs)
-              const pendingBatchUpdates: { id: string; changes: Partial<Stock> }[] = [];
-
-              Object.entries(historyMap).forEach(([code, history]) => {
-                  const inflow = calculateNetInflow(history);
-                  const stockToUpdate = stocks.find(s => s.code === code);
-                  const tech = calculateIndicators(history, stockToUpdate?.currentPrice);
-                  
-                  if (stockToUpdate) {
-                      let tempStock = { ...stockToUpdate, technicals: tech, mainForceInflow: inflow };
-                      
-                      // V7.1: Calculate Real-time Trap Risk
-                      const trapAnalysis = analyzeTrapRiskV41(tempStock, phase, stocks);
-                      tempStock = { 
-                          ...tempStock, 
-                          trapRiskScore: trapAnalysis.score, 
-                          trapSignals: trapAnalysis.signals 
-                      };
-
-                      // V8.6 Context Integration
-                      // V65.0: Inject micro-context from intraday indicators
-                      const _ind2 = tempStock.intradayIndicators;
-                      const _mc2 = {
-                        macdfs: (_ind2?.macdfs?.signal || 'None') as 'GoldenCross' | 'DeadCross' | 'None',
-                        volumeRatio: _ind2?.volumeStructure?.avgVol5 ? _ind2.volumeStructure.lastVol / _ind2.volumeStructure.avgVol5 : tempStock.volumeRatio,
-                        netInflow: tempStock.mainForceInflow,
-                        isHeavyVolume: _ind2?.volumeStructure?.isHeavy || false,
-                      };
-                      const _hm2 = _mc2.macdfs !== 'None' || _mc2.volumeRatio !== undefined || _mc2.netInflow !== undefined;
-
-                      const signal = analyzeLiveStockSignal(tempStock, undefined, _hm2 ? _mc2 : undefined);
-                      
-                      const newPrediction = {
-                          trend: signal.trend,
-                          summary: signal.summary,
-                          strategy: signal.strategy,
-                          positionAdvice: signal.positionAdvice,
-                          winRate: signal.prediction?.probability || 50,
-                          buyPoint: `¥${signal.buyPoint.toFixed(2)}`,
-                          sellPoint: `¥${signal.sellPoint.toFixed(2)}`,
-                          prediction: signal.prediction,
-                          smartEntry: signal.smartEntry,
-                      };
-                      
-                      pendingBatchUpdates.push({
-                          id: stockToUpdate.id,
-                          changes: {
-                              mainForceInflow: inflow,
-                              technicals: tech,
-                              trapRiskScore: trapAnalysis.score,
-                              trapSignals: trapAnalysis.signals,
-                              aiPrediction: newPrediction as any,
-                              stargate: signal.stargate
-                          }
-                      });
-                  }
-              });
-
-              // V65.1: Single batched update, skip full recalc (signals already computed above)
-              if (pendingBatchUpdates.length > 0) {
-                  updateStocks(pendingBatchUpdates, false);
-              }
-          } catch (e) {
-              console.error("Failed to calc inflow", e);
-          }
-      };
-      
-      // Debounce slightly
-      const timer = setTimeout(fetchFlow, 1000);
-      return () => clearTimeout(timer);
-  }, [stocks, analyzeLiveStockSignal]);
-
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isFetching, setIsFetching] = useState(false);
@@ -346,19 +212,15 @@ export const DragonPool: React.FC = () => {
         if (stock.role === 'Potential' && (stock.changePercent || 0) > 3) score += 10;
     }
 
-    // 3. Main Force & Flow (Truth) - V16.0: Relative Ratio
-    if (stock.mainForceInflow && stock.currentPrice && stock.volume) {
-         // Estimate Turnover Amount
-         const estTurnover = stock.volume * stock.currentPrice;
-         const flowRatio = estTurnover > 0 ? (stock.mainForceInflow / estTurnover) : 0;
-         
-         if (flowRatio > 0.1) score += 15; // > 10% Net Inflow
-         else if (flowRatio > 0.05) score += 5; 
-         else if (flowRatio < -0.05) score -= 20; 
-    } else {
-        const flowQuality = stock.moneyQualityScore || 50;
-        if (flowQuality > 75) score += 15; 
-        if (flowQuality < 30) score -= 20; 
+    // 3. Vendor large-order flow. The OHLCV pressure proxy is a separate
+    // confirmation signal and never substitutes for direct large-order data.
+    const capitalFlow = assessCapitalFlow(stock);
+    if (capitalFlow.signal === 'CONFLICT') {
+        score -= 10;
+    } else if (capitalFlow.directRatio !== undefined) {
+        if (capitalFlow.directRatio > 0.1) score += 15;
+        else if (capitalFlow.directRatio > 0.05) score += 5;
+        else if (capitalFlow.directRatio < -0.05) score -= 20;
     }
 
     // 4. Technical Structure (V7.0 Deep Dive)
@@ -410,7 +272,7 @@ export const DragonPool: React.FC = () => {
     // V17.2: Golden Pit Bonus (Sync with TableRow)
     const isCore = ['Leader', 'Vice', 'Main'].includes(stock.role);
     const isDrop = (stock.changePercent || 0) < -3 && !stock.isLimitDown;
-    const isMoneyIn = (stock.mainForceInflow || 0) > 0;
+    const isMoneyIn = ['CONFIRMED_INFLOW', 'DIRECT_INFLOW'].includes(capitalFlow.signal);
     const isShrinking = (stock.turnoverRate || 0) < 15;
     
     // Strict Gates
@@ -665,8 +527,8 @@ export const DragonPool: React.FC = () => {
          const matchedTheme = PRESET_THEMES.find(t => t.stocks.some(s => s.code.endsWith(code) || code.endsWith(s.code)));
          
          // REAL COMBAT MODE: Use Actual Market Data
-         // We do not simulate data. If backend provides turnoverRate, use it.
-         // If MainForceInflow is not available (Tencent L1 Quote), we set to 0 to avoid misleading.
+         // Do not manufacture a capital-flow value. Direct large-order data is
+         // attached by the quote endpoint when that source is available.
          
          const newStock: Stock = {
             id: Date.now().toString() + Math.random().toString().slice(2, 5),
@@ -684,13 +546,11 @@ export const DragonPool: React.FC = () => {
             // Hunter V5.0 Real Data Mapping
             turnoverRate: stock.turnoverRate || 0, // Use Real Turnover Rate from API
             turnoverAmount: stock.amount || 0,
-            mainForceInflow: 0, // Pending L2 Data Integration (Do not simulate)
-            moneyQualityScore: stock.isLimitUp ? 90 : 60 + (stock.changePercent || 0), // Basic score based on Price
             trapRiskScore: 0, // Pending real risk model
             aiPrediction: {
-                trend: stock.isLimitUp ? 'Accelerate' : 'Neutral',
-                summary: 'AI 初始扫',
-                strategy: '等待进一步形态确认'
+                trend: 'Neutral',
+                summary: '等待证据',
+                strategy: '历史数据与滚动验证完成后再生成结论'
             }
          };
          newStocksList.push(newStock);
@@ -868,7 +728,7 @@ export const DragonPool: React.FC = () => {
         forceRefreshHistory(); // Reset failed history items to trigger refetch
         await refreshData();
         
-        // Force Refetch Inflow for ALL stocks (Real-time recalculation)
+        // Refresh extended history for all visible pool stocks.
         const codes = stocks.map(s => s.code);
         if (codes.length > 0) {
             const historyMap = await fetchStockHistoryBatch(codes);
@@ -876,12 +736,11 @@ export const DragonPool: React.FC = () => {
             const batchUpdates: { id: string; changes: Partial<Stock> }[] = [];
 
             Object.entries(historyMap).forEach(([code, history]) => {
-                const inflow = calculateNetInflow(history);
                 const stock = stocks.find(s => s.code === code);
                 const tech = calculateIndicators(history, stock?.currentPrice);
                 
                 if (stock) {
-                    let tempStock = { ...stock, technicals: tech, mainForceInflow: inflow };
+                    let tempStock = { ...stock, history, technicals: tech };
                     
                     const trapAnalysis = analyzeTrapRiskV41(tempStock, phase, stocks);
                     tempStock = { 
@@ -894,17 +753,19 @@ export const DragonPool: React.FC = () => {
                     const _mc3 = {
                       macdfs: (_ind3?.macdfs?.signal || 'None') as 'GoldenCross' | 'DeadCross' | 'None',
                       volumeRatio: _ind3?.volumeStructure?.avgVol5 ? _ind3.volumeStructure.lastVol / _ind3.volumeStructure.avgVol5 : tempStock.volumeRatio,
-                      netInflow: tempStock.mainForceInflow,
+                      largeOrderNetYuan: getDirectLargeOrderNetYuan(tempStock),
                       isHeavyVolume: _ind3?.volumeStructure?.isHeavy || false,
                     };
-                    const _hm3 = _mc3.macdfs !== 'None' || _mc3.volumeRatio !== undefined || _mc3.netInflow !== undefined;
+                    const _hm3 = _mc3.macdfs !== 'None' ||
+                      _mc3.volumeRatio !== undefined ||
+                      _mc3.largeOrderNetYuan !== undefined;
 
                     const signal = analyzeLiveStockSignal(tempStock, undefined, _hm3 ? _mc3 : undefined);
                     
                     batchUpdates.push({
                         id: stock.id,
                         changes: {
-                            mainForceInflow: inflow,
+                            history,
                             technicals: tech,
                             trapRiskScore: trapAnalysis.score,
                             trapSignals: trapAnalysis.signals,
@@ -928,7 +789,7 @@ export const DragonPool: React.FC = () => {
             }
         }
         
-        toast.success("核心池数据及主力资金已实时更新");
+        toast.success("核心池行情、历史与大单数据已更新");
     } catch (e) {
         toast.error("更新失败，请检查网络");
     } finally {
@@ -1138,7 +999,16 @@ export const DragonPool: React.FC = () => {
          </div>
       </div>
 
-
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-[9px] font-bold text-slate-500">
+        <span className="flex items-center gap-1.5 font-black text-slate-700">
+          <Activity className="h-3.5 w-3.5 text-red-500" />
+          结论口径
+        </span>
+        <span><b className="text-slate-700">个股</b>＝K线与技术指标完整度</span>
+        <span><b className="text-slate-700">市场</b>＝全市场宽度覆盖状态</span>
+        <span><b className="text-slate-700">证据</b>＝非重叠滚动验证样本</span>
+        <span><b className="text-slate-700">大单净额</b>＝供应商大单口径；量价压力仅用于方向校验</span>
+      </div>
 
       {/* Mobile View: Cards (Optional) */}
       {viewMode === 'card' && (

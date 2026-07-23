@@ -23,6 +23,10 @@ import {
 } from "lucide-react";
 import { Stock, MarketPhase } from "../../types";
 import { motion } from "motion/react";
+import {
+  assessCapitalFlow,
+  formatCapitalFlowYuan,
+} from "../../utils/capitalFlow";
 
 // V67.3: Board type detection for risk awareness (创业板/科创板 = 20% limit)
 function getBoardType(code: string): { label: string; color: string } | null {
@@ -52,6 +56,11 @@ export const StockMobileCard: React.FC<StockMobileCardProps> = ({
 }) => {
   const isRed = (stock.changePercent || 0) > 0;
   const isGreen = (stock.changePercent || 0) < 0;
+  const capitalFlow = assessCapitalFlow(stock);
+  const directNetYuan = capitalFlow.directNetYuan;
+  const isDirectInflow =
+    capitalFlow.signal === "DIRECT_INFLOW" ||
+    capitalFlow.signal === "CONFIRMED_INFLOW";
 
   // --- Quality Score Logic (Simplified for Mobile) ---
   const alphaScore = stock.independenceScore || 50;
@@ -67,9 +76,10 @@ export const StockMobileCard: React.FC<StockMobileCardProps> = ({
   if (stock.isLimitUp) score += 25;
   else if ((stock.changePercent || 0) > 5) score += 15;
   else if ((stock.changePercent || 0) < -5) score -= 15;
-  if (stock.mainForceInflow !== undefined) {
-      if (stock.mainForceInflow > 10) score += 15;
-      else if (stock.mainForceInflow < -10) score -= 20;
+  if (directNetYuan !== undefined) {
+      if (directNetYuan > 10_000_000) score += 15;
+      else if (directNetYuan < -10_000_000) score -= 20;
+      if (capitalFlow.signal === "CONFLICT") score -= 10;
   }
   if ((stock.trapRiskScore || 0) > 60) score -= 30;
   score = Math.min(100, Math.max(0, score));
@@ -84,7 +94,7 @@ export const StockMobileCard: React.FC<StockMobileCardProps> = ({
 
       const tech = stock.technicals || {};
       const isDragonPass = (tech.rsi || 0) > 85 && (stock.independenceScore || 50) > 65;
-      const isGoldenPit = ['Leader', 'Vice', 'Main'].includes(stock.role) && (stock.changePercent || 0) < -3 && !stock.isLimitDown && (stock.mainForceInflow || 0) > 0 && (stock.turnoverRate || 0) < 15;
+      const isGoldenPit = ['Leader', 'Vice', 'Main'].includes(stock.role) && (stock.changePercent || 0) < -3 && !stock.isLimitDown && isDirectInflow && (stock.turnoverRate || 0) < 15;
 
       if (stock.isLimitUp) {
           const sealQuality = stock.sealQualityScore || 100;
@@ -186,9 +196,13 @@ export const StockMobileCard: React.FC<StockMobileCardProps> = ({
       {/* Middle: Stats Grid */}
       <div className="grid grid-cols-3 gap-2 mb-3 bg-slate-50/50 rounded-xl p-2 border border-slate-100">
           <div className="flex flex-col items-center justify-center border-r border-slate-200/50">
-             <span className="text-[9px] font-bold text-slate-400 uppercase">主力</span>
-             <div className={cn("text-[11px] font-black font-mono mt-0.5", (stock.mainForceInflow || 0) > 0 ? "text-red-500" : "text-green-500")}>
-                {(stock.mainForceInflow || 0) > 0 ? "+" : ""}{stock.mainForceInflow?.toFixed(1) || "0.0"}M
+             <span className="text-[9px] font-bold text-slate-400 uppercase">大单净额</span>
+             <div
+               className={cn("text-[11px] font-black font-mono mt-0.5", directNetYuan === undefined ? "text-slate-400" : directNetYuan > 0 ? "text-red-500" : "text-green-500")}
+               title={capitalFlow.signal === "CONFLICT" ? "大单净额与5日量价压力方向冲突" : "东方财富大单净额"}
+             >
+                {formatCapitalFlowYuan(directNetYuan)}
+                {capitalFlow.signal === "CONFLICT" ? " · 冲突" : ""}
              </div>
           </div>
           <div className="flex flex-col items-center justify-center border-r border-slate-200/50">
@@ -221,7 +235,7 @@ export const StockMobileCard: React.FC<StockMobileCardProps> = ({
                       className="text-[8px] font-mono text-slate-400"
                       title={stock.aiPrediction.prediction.warnings?.join('\n')}
                     >
-                      {stock.aiPrediction.prediction.probability}% · 数据{stock.aiPrediction.prediction.dataReliability === 'HIGH' ? '高' : stock.aiPrediction.prediction.dataReliability === 'MEDIUM' ? '中' : '低'}/证据{stock.aiPrediction.prediction.evidenceReliability === 'HIGH' ? '高' : stock.aiPrediction.prediction.evidenceReliability === 'MEDIUM' ? '中' : '低'}
+                      {stock.aiPrediction.prediction.probability}% · 个股{stock.aiPrediction.prediction.dataReliability === 'HIGH' ? '高' : stock.aiPrediction.prediction.dataReliability === 'MEDIUM' ? '中' : '低'} · 市场{stock.aiPrediction.prediction.marketDataStatus === 'FRESH' ? '完整' : stock.aiPrediction.prediction.marketDataStatus === 'PARTIAL' ? '部分' : stock.aiPrediction.prediction.marketDataStatus === 'STALE' ? '过期' : '缺失'} · 证据{stock.aiPrediction.prediction.sampleSize || 0}笔
                     </span>
                  </div>
              )}

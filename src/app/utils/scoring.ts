@@ -2,6 +2,7 @@ import { Stock, Theme, MarketIndex, type DailyMetrics, type MarketPhase, type Se
 import { calculateAlphaDivergence } from './indicators';
 import { calculateExpectationGapV41, analyzeTrapRiskV41, generateAIPredictionV41 } from './algorithmV41';
 import { calculateTopConceptConsensus } from './marketConcepts';
+import { assessCapitalFlow, getDirectLargeOrderNetYuan } from './capitalFlow';
 export { calculateFullMarketEntropy } from './marketCrossSection';
 
 /**
@@ -641,24 +642,14 @@ export const calculateDragonSurvival = (leader: Stock, marketTemp: number, phase
         else if (phase === 'Ebb') probability -= 15;
     }
 
-    // 6. 主力/机构资金态度 (V16.5 深度修正：净流入占比)
-    // 抛弃绝对金额判断，改用 "净流入 / 成交额" (Net Inflow Ratio)
-    // 逻辑：小盘股流入 2000万 可能占比 30% (控盘)，大盘股流入 1亿 可能占比 1% (散户)
-    if (leader.mainForceInflow && leader.turnoverAmount) {
-        const flowRatio = leader.mainForceInflow / leader.turnoverAmount; // 净额 / 总成交
-        
+    // 6. Vendor large-order attitude, normalized by reported turnover.
+    const capitalFlow = assessCapitalFlow(leader);
+    if (capitalFlow.directRatio !== undefined && capitalFlow.signal !== 'CONFLICT') {
+        const flowRatio = capitalFlow.directRatio;
         if (flowRatio > 0.15) probability += 15; // 净买入 > 15%，绝对控筹
         else if (flowRatio > 0.05) probability += 8; // 净买入 > 5%，积极做多
         else if (flowRatio < -0.10) probability -= 15; // 净流出 > 10%，大举出货
         else if (flowRatio < -0.05) probability -= 5;
-    } 
-    // Fallback: 如果没有 turnoverAmount，使用估算值
-    else if (leader.mainForceInflow && leader.volume && leader.currentPrice) {
-         const estTurnover = leader.volume * leader.currentPrice;
-         const flowRatio = leader.mainForceInflow / estTurnover;
-         
-         if (flowRatio > 0.1) probability += 10;
-         else if (flowRatio < -0.1) probability -= 10;
     }
 
     // 7. 换手稳定性 (Turnover Stability) - v8.0 New
@@ -702,18 +693,13 @@ export const calculateOvernightPotential = (stock: Stock, localMetrics: any, pha
     riskType: string,          // 风险类型 (炸板/低开/核按钮)
     strategy: string           // 操作指引
 } => {
-    // 0. 基础随机熵 (Entropy) - 让不同股票即使数据缺失也有不同表现
-    // 使用股票代码作为种子，确保同一股票每次推演结果一致
-    const codeSeed = parseInt(stock.code.replace(/\D/g, '') || "0") % 100;
-    const entropy = (codeSeed / 100) - 0.5; // -0.5 ~ +0.5
-    
-    let score = 50 + (entropy * 20); // 基础分引入 +/- 10分波动
+    let score = 50;
     
     const isLimitUp = stock.isLimitUp;
     const change = stock.changePercent || 0;
-    const turnover = stock.turnoverRate || (5 + entropy * 5); // 模拟换手率
-    const sealStrength = localMetrics?.sealStrength || (isLimitUp ? 60 + entropy * 20 : 0);
-    const moneyInflow = stock.mainForceInflow || (entropy * 10000000); 
+    const hasTurnover = Number.isFinite(stock.turnoverRate);
+    const turnover = hasTurnover ? stock.turnoverRate! : 0;
+    const moneyInflow = getDirectLargeOrderNetYuan(stock);
     
     // 1. 基础分：基于涨幅状态
     if (isLimitUp) score = 80; // 涨停板基础分提高
@@ -722,9 +708,6 @@ export const calculateOvernightPotential = (stock: Stock, localMetrics: any, pha
     else if (change < -5) score = 30;
     else if (change < -9) score = 10;
     
-    // 修正：根据代码种子微调，避免同质化
-    score += (codeSeed % 10) - 5; 
-
     // 2. 封板质量修正 (Seal Quality)
     // 尝试从 localMetrics 或 stock 原生数据中获取封单力度
     let finalSealStrength = localMetrics?.sealStrength || 0;
@@ -740,8 +723,6 @@ export const calculateOvernightPotential = (stock: Stock, localMetrics: any, pha
         else if (bidMoney > 10000000) finalSealStrength = 60; // > 1000万
         else finalSealStrength = 40; // 烂板
         
-        // 加上随机扰动
-        finalSealStrength += (entropy * 10);
     }
 
     if (isLimitUp) {
@@ -763,14 +744,14 @@ export const calculateOvernightPotential = (stock: Stock, localMetrics: any, pha
 
     // 3. 换手率博弈 (Turnover Game)
     // 死亡换手 (>50%) 极大概率低开或核按钮
-    if (turnover > 55) score -= 40;
-    else if (turnover > 40) score -= 20;
-    else if (turnover < 5 && isLimitUp) score += 15; // 缩量一字/秒板
-    else if (turnover > 15 && change > 5) score += 5; // 高换手高涨幅，有人气
+    if (hasTurnover && turnover > 55) score -= 40;
+    else if (hasTurnover && turnover > 40) score -= 20;
+    else if (hasTurnover && turnover < 5 && isLimitUp) score += 15; // 缩量一字/秒板
+    else if (hasTurnover && turnover > 15 && change > 5) score += 5; // 高换手高涨幅，有人气
 
     // 4. 主力资金态度 (Main Force Attitude)
-    if (moneyInflow > 10000) score += 10; // 大举流入 > 1亿
-    else if (moneyInflow < -5000) score -= 15; // 主力出逃
+    if (moneyInflow !== undefined && moneyInflow > 100_000_000) score += 10;
+    else if (moneyInflow !== undefined && moneyInflow < -50_000_000) score -= 15;
     
     // 额外因子：量比
     if ((stock.volumeRatio || 1) > 2) score += 5;
@@ -780,13 +761,13 @@ export const calculateOvernightPotential = (stock: Stock, localMetrics: any, pha
     
     // A. Ambush/Low-Suck Structure (潜伏/低吸)
     // Criteria: Shrinking volume + Price stable + Money In (or at least not fleeing)
-    const isShrinking = turnover < 3.0; 
+    const isShrinking = hasTurnover && turnover < 3.0;
     const isStable = change > -3.5 && change < 3.5;
-    const isMoneySafe = moneyInflow > -2000; 
+    const isMoneySafe = moneyInflow !== undefined && moneyInflow > -20_000_000;
     
     if (isShrinking && isStable && isMoneySafe) {
         // If score was nuked by "low price change", restore it to "Safe Observation" level
-        if (score < 50) score = 55 + (entropy * 10);
+        if (score < 50) score = 55;
     }
 
     // B. Refueling Structure (空中加油)
@@ -1062,7 +1043,7 @@ export const calculateCrowdedness = (themeName: string, stocks: Stock[]): number
 };
 
 /**
- * 资金诚意评分 (Money Quality Score) - v29.0
+ * 量价质量评分 (legacy field name: Money Quality Score) - v29.0
  * 逻辑：基于分时量价关系、封单强度、以及相对于全场流动性的占比。
  * 真实逻辑：不仅看涨幅，更看“有效成交”与“订单流压力”。
  */
@@ -1073,12 +1054,12 @@ export const calculateMoneyQuality = (stock: Stock): number => {
     const open = stock.open || current;
     const high = stock.high || current;
     
-    if (change <= 0) return 30; // 负反馈标的诚意不足
+    if (change <= 0) return 30;
 
     let score = 50;
 
-    // 1. 量价配合因子：高位缩量是风，低位放量是诚意
-    // 如果涨幅 > 7% 但换手极低 (< 2%)，可能是“缩量加速”，诚意分降低（风险增加）
+    // 1. 量价配合因子
+    // 如果涨幅 > 7% 但换手极低 (< 2%)，缩量加速风险上升
     if (change > 7 && turnover < 2) score -= 20; 
     // 如果换手适中 (5-10%) 且涨停，是黄金换手
     if (stock.isLimitUp && turnover > 5 && turnover < 15) score += 30;

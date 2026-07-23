@@ -10,6 +10,7 @@
  */
 
 import { Stock } from '../types';
+import { getDirectLargeOrderNetYuan, getTurnoverYuan } from './capitalFlow';
 
 export interface RealtimeMetrics {
   limitUpProbability: number;      // 涨停概率 (0-100)
@@ -253,9 +254,11 @@ export const calculateMainForceChips = (stock: Stock, ticks: any[]): number => {
 
   // 1. 大单净流入占比 (40分)
   const bigBuyRatio = (stock.bigBuyAmount || 0) / (stock.volume || 1);
-  // 如果没有具体大单数据，尝试用主力净流入估算
-  if (stock.bigBuyAmount === undefined && stock.mainMoneyIn) {
-       const moneyInRatio = stock.mainMoneyIn / (stock.amount || stock.volume * stock.currentPrice! || 1);
+  // 如果没有逐笔大单数据，使用供应商大单净额；不使用量价代理冒充资金流。
+  const largeOrderNetYuan = getDirectLargeOrderNetYuan(stock);
+  const turnoverYuan = getTurnoverYuan(stock);
+  if (stock.bigBuyAmount === undefined && largeOrderNetYuan !== undefined && turnoverYuan) {
+       const moneyInRatio = largeOrderNetYuan / turnoverYuan;
        if (moneyInRatio > 0.2) score += 40;
        else if (moneyInRatio > 0.1) score += 25;
        else if (moneyInRatio > 0) score += 10;
@@ -267,10 +270,9 @@ export const calculateMainForceChips = (stock: Stock, ticks: any[]): number => {
   }
 
   // 2. 主力资金净流入 (30分)
-  const mainMoneyIn = stock.mainMoneyIn || 0;
-  if (mainMoneyIn > 500000000) score += 30;  // 5亿+ (降低门槛以适配更多票)
-  else if (mainMoneyIn > 100000000) score += 20; // 1亿+
-  else if (mainMoneyIn > 30000000) score += 10; // 3000万+
+  if ((largeOrderNetYuan || 0) > 500_000_000) score += 30;
+  else if ((largeOrderNetYuan || 0) > 100_000_000) score += 20;
+  else if ((largeOrderNetYuan || 0) > 30_000_000) score += 10;
 
   // 3. 换手率 (20分) - 适度换手最佳
   const turnoverRate = stock.turnoverRate || 0;
@@ -343,8 +345,9 @@ export const calculateDarkPoolMoney = (stock: Stock, ticks: any[]): number => {
 
   // 2.5 [NEW] 主力资金背离监测 (Ghost Divergence) (New 20分)
   // 逻辑：主力大幅流入但股价未涨 -> 典型的隐性承接/压盘吸筹
-  if (stock.mainMoneyIn) {
-      const mainMoney = stock.mainMoneyIn;
+  const largeOrderNetYuan = getDirectLargeOrderNetYuan(stock);
+  if (largeOrderNetYuan !== undefined) {
+      const mainMoney = largeOrderNetYuan;
       const change = stock.changePercent || 0;
       
       // 场景A: 强资金流入 + 滞涨 (吸筹)

@@ -15,6 +15,11 @@ import { calculateOvernightPotential, calculateLimitUpStrength } from '../../uti
 import { isActionableBullishPrediction } from '../../utils/predictionCalibration';
 import { calculateLimitState } from '../../../shared/marketRules';
 import { useTrading } from '../../context/Store';
+import {
+  assessCapitalFlow,
+  formatCapitalFlowYuan,
+  getDirectLargeOrderNetYuan,
+} from '../../utils/capitalFlow';
 
 interface StockDiagnosisDialogProps {
   isOpen: boolean;
@@ -103,7 +108,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
              const _diagMicro = _diagIntraday?.macdfs ? {
                macdfs: _diagIntraday.macdfs.signal as 'GoldenCross' | 'DeadCross' | 'None',
                volumeRatio: _diagIntraday.volumeStructure?.avgVol5 ? _diagIntraday.volumeStructure.lastVol / _diagIntraday.volumeStructure.avgVol5 : undefined,
-               netInflow: mergedStock.mainForceInflow,
+               largeOrderNetYuan: getDirectLargeOrderNetYuan(mergedStock),
                isHeavyVolume: _diagIntraday.volumeStructure?.isHeavy || false,
              } : undefined;
 
@@ -139,6 +144,11 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   if (!stock) return null;
 
   const { profile: fundProfile, detectedName: fundName } = detectFundIdentity(stock);
+  const capitalFlow = assessCapitalFlow(stock);
+  const largeOrderNetYuan = capitalFlow.directNetYuan;
+  const isVerifiedLargeOrderInflow =
+      capitalFlow.signal === 'DIRECT_INFLOW' ||
+      capitalFlow.signal === 'CONFIRMED_INFLOW';
 
   const current = stock.currentPrice || 0;
   const high = stock.high || current;
@@ -196,21 +206,20 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   const margin = stock.marginData;
   if (margin) {
       if ((stock.changePercent || 0) < -5 && margin.financingNetBuy > 1000) refinedRisk += 25;
-      if (margin.financingNetBuy > 500 && (stock.mainForceInflow || 0) < -500) refinedRisk += 20;
+      if (margin.financingNetBuy > 500 && (largeOrderNetYuan || 0) < -50_000_000) refinedRisk += 20;
       if (margin.shortNetSell > 500) refinedRisk += 15;
   }
 
   // --- V17.0: GOLDEN PIT DETECTION ---
   const isCoreAsset = ['Leader', 'Vice', 'Main'].includes(stock.role);
   const isDrop = (stock.changePercent || 0) < -3 && !stock.isLimitDown;
-  const turnoverAmt = stock.turnoverAmount || (stock.volume || 0) * current;
-  const flowRatio = turnoverAmt > 0 ? ((stock.mainForceInflow || 0) / turnoverAmt) : 0;
-  const isSmartMoneyIn = (stock.mainForceInflow || 0) > 0 || flowRatio > -0.02;
+  const turnoverAmt = capitalFlow.turnoverYuan || 0;
+  const flowRatio = capitalFlow.directRatio;
   const isShrinking = (stock.turnoverRate || 0) < 15; 
   const isLeverageWash = margin ? margin.financingNetBuy < 0 : true;
   const isSectorSafe = !stock.isThemeDropout && (stock.resonanceScore || 0) > 50;
   const isHighConfidence = isActionableBullishPrediction(stock.aiPrediction?.prediction);
-  const isGoldenPit = isCoreAsset && isDrop && isSmartMoneyIn && isShrinking && !isNuclear && isSectorSafe && isHighConfidence && isLeverageWash;
+  const isGoldenPit = isCoreAsset && isDrop && isVerifiedLargeOrderInflow && isShrinking && !isNuclear && isSectorSafe && isHighConfidence && isLeverageWash;
 
   if (localMetrics) {
       if ((stock.changePercent || 0) > 5 && localMetrics.mainForceChips < 40) refinedRisk += 20;
@@ -226,9 +235,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   }
   
   if ((stock.changePercent || 0) > 5) {
-      const moneyIn = stock.mainMoneyIn || 0;
-      const fRatio = turnoverAmt > 0 ? (moneyIn / turnoverAmt) : 0;
-      if (fRatio < -0.05) refinedRisk = Math.max(refinedRisk, 90);
+      if (flowRatio !== undefined && flowRatio < -0.05) refinedRisk = Math.max(refinedRisk, 90);
   }
 
   refinedRisk = Math.max(0, Math.min(100, refinedRisk));
@@ -254,14 +261,10 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       if (stock.role === 'Potential' && (stock.changePercent || 0) > 3) score += 10;
   }
 
-  if (stock.mainForceInflow !== undefined) {
-       const fRatio = turnoverAmt > 0 ? (stock.mainForceInflow / turnoverAmt) : 0;
-       if (fRatio > 0.1) score += 15;
-       else if (fRatio < -0.05) score -= 20;
-  } else {
-      const flowQuality = stock.moneyQualityScore || 50;
-      if (flowQuality > 75) score += 15; 
-      if (flowQuality < 30) score -= 20; 
+  if (flowRatio !== undefined) {
+       if (flowRatio > 0.1 && capitalFlow.signal !== 'CONFLICT') score += 15;
+       else if (flowRatio < -0.05) score -= 20;
+       if (capitalFlow.signal === 'CONFLICT') score -= 10;
   }
 
   if (tech.chipPressure && tech.chipPressure > 80) score -= 15;
@@ -348,7 +351,9 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   }
 
   if (localMetrics) {
-      const staticMoneyScore = 50 + (stock.mainForceInflow && stock.mainForceInflow > 0 ? 15 : -15);
+      const staticMoneyScore = largeOrderNetYuan === undefined
+          ? 50
+          : 50 + (largeOrderNetYuan > 0 ? 15 : -15);
       const realMoneyScore = localMetrics.mainForceChips; 
       const blendedMoney = staticMoneyScore * 0.4 + realMoneyScore * 0.6;
       score += (blendedMoney - staticMoneyScore) * 0.5;
@@ -452,8 +457,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   // We must NOT let today's high price dilute their low historical cost.
   
   // 1. Determine Main Force Flow Direction
-  const netInflow = stock.mainMoneyIn - stock.mainMoneyOut;
-  const isNetBuy = netInflow > 0;
+  const isNetBuy = (largeOrderNetYuan || 0) > 0;
   const turnover = stock.turnoverRate || 0;
   
   // 2. Determine Cost Weights based on Direction
@@ -602,8 +606,8 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
            ? `致命陷阱：回马枪形态看似反转确认，但Alpha值(${(tech.alpha || 0).toFixed(1)})表明趋势早已死亡。`
            : '';
        gameState = {
-          status: _isFakeMainSignal ? "假主升 (空壳趋势)" : _isZombieSignal ? "僵尸复活 (虚假反转)" : "主力出货 (陷阱)",
-          desc: `检测到明确的出货/诱多信号。虽然股价看似在成本线附近，但这大概率是主力"对倒"制造的成本假象。`,
+          status: _isFakeMainSignal ? "假主升 (空壳趋势)" : _isZombieSignal ? "僵尸复活 (虚假反转)" : "派发风险 (陷阱)",
+          desc: `检测到明确的出货/诱多结构。量价估算成本不能证明机构真实持仓，应以风险信号为先。`,
           color: "text-red-500",
           bg: (_isFakeMainSignal || _isZombieSignal) ? "bg-red-100" : "bg-red-50",
           icon: (_isFakeMainSignal || _isZombieSignal) ? Skull : Siren 
@@ -615,8 +619,8 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       if (isLowTurnoverControl && mfProfitRatio < 40) {
           // 浮盈虽高 (25%~40%)，但换手极低 -> 强庄锁仓
           gameState = {
-              status: "主力锁仓 (控盘)",
-              desc: `主力浮盈 ${mfProfitRatio.toFixed(1)}%，处于极高水平。但因换手率极低(<3%)，表明筹码已被主力彻底锁定。只要不出现放量阴线，可继续享受轿子。`,
+              status: "低换手锁仓特征",
+              desc: `现价较量价估算成本高 ${mfProfitRatio.toFixed(1)}%，同时换手率极低(<3%)。这是锁仓特征，不等于已识别真实机构持仓。`,
               color: "text-purple-500",
               bg: "bg-purple-50",
               icon: Lock
@@ -624,8 +628,8 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       } else {
           // 真正的出货风险
           gameState = {
-              status: "主力控盘 (高危)",
-              desc: `主力浮盈 ${mfProfitRatio.toFixed(1)}% (>${effectiveRiskThreshold.toFixed(1)}%)。${stock.role === 'Leader' ? '虽是龙头，但' : '股性疲软且'}获利盘极厚，随时可能核按钮。`,
+              status: "高浮盈结构 (高危)",
+              desc: `现价较量价估算成本高 ${mfProfitRatio.toFixed(1)}% (>${effectiveRiskThreshold.toFixed(1)}%)。${stock.role === 'Leader' ? '虽是龙头，但' : '股性疲软且'}潜在兑现压力较高。`,
               color: "text-red-500",
               bg: "bg-red-50",
               icon: Skull
@@ -636,7 +640,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       if (current < ma5) {
           gameState = {
               status: "高位整固 (分歧)",
-              desc: `主力浮盈 ${mfProfitRatio.toFixed(1)}%，但股价失守5日线，进攻转入防守。连续回调说明主力在"借势洗盘"或"边打边撤"，需警惕。`,
+              desc: `现价较量价估算成本高 ${mfProfitRatio.toFixed(1)}%，但股价失守5日线，进攻转入防守，需警惕连续回调。`,
               color: "text-amber-600",
               bg: "bg-amber-50",
               icon: Activity
@@ -645,8 +649,8 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
           const trendDesc = isTrendUp ? "依托5日线强势逼空，" : "虽然浮盈较高，但趋势暂未走坏，";
           const isGreen = (stock.changePercent || 0) < 0;
           gameState = {
-              status: isGreen ? "拉升中继 (洗盘)" : "主力拉升期",
-              desc: `主力浮盈 ${mfProfitRatio.toFixed(1)}%。${trendDesc}${isHeavyVolume ? '今日爆量换手，新主力高位接力(换庄)，相对安全。' : '缩量拉升，主力底仓获利丰厚，谨防随时兑现砸盘。'}`,
+              status: isGreen ? "拉升中继 (分歧)" : "趋势拉升期",
+              desc: `现价较量价估算成本高 ${mfProfitRatio.toFixed(1)}%。${trendDesc}${isHeavyVolume ? '今日爆量换手，筹码交换充分。' : '缩量拉升，潜在兑现压力需持续观察。'}`,
               color: isGreen ? "text-blue-500" : "text-orange-500",
               bg: isGreen ? "bg-blue-50" : "bg-orange-50",
               icon: isGreen ? Activity : TrendingUp
@@ -656,15 +660,15 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       if (isTrendBroken) {
           gameState = {
             status: "成本支撑 (险)",
-            desc: `股价虽回踩主力成本线(¥${estimatedMFCost.toFixed(2)})，但已跌破趋势线(MA20)。若不能快速收回，将演变为"阴跌出货"。`,
+            desc: `股价虽回踩量价估算成本(¥${estimatedMFCost.toFixed(2)})，但已跌破趋势线(MA20)。若不能快速收回，弱势风险上升。`,
             color: "text-amber-600",
             bg: "bg-amber-50",
             icon: Shield
           };
       } else {
           gameState = {
-              status: "与庄共舞 (最佳)",
-              desc: `主力成本约 ¥${estimatedMFCost.toFixed(2)}，浮盈仅 ${mfProfitRatio.toFixed(1)}%。趋势完好，${isHeavyVolume ? '新资金完接力，' : ''}主力无砸盘空间，必须合力做多。`,
+              status: "成本支撑 (观察)",
+              desc: `量价估算成本约 ¥${estimatedMFCost.toFixed(2)}，现价偏离 ${mfProfitRatio.toFixed(1)}%。趋势仍在，但该估算不代表机构真实成本。`,
               color: "text-emerald-600",
               bg: "bg-emerald-50",
               icon: Handshake
@@ -672,8 +676,8 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       }
   } else {
       gameState = {
-          status: "主力被套 (黄金坑)",
-          desc: `主力被套 ${Math.abs(mfProfitRatio).toFixed(1)}%。${volatility > 5 ? '妖股深水洗盘，' : '主力自救欲望极强，'}这是捡带血筹码的绝佳博弈点。`,
+          status: "低于估算成本",
+          desc: `现价低于量价估算成本 ${Math.abs(mfProfitRatio).toFixed(1)}%。这只说明价格位置偏低，不能推导机构被套或必然自救。`,
           color: "text-blue-600",
           bg: "bg-blue-50",
           icon: Anchor
@@ -750,13 +754,13 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   const isAmbushLowPos = (stock.currentPrice || 0) < lifeLine || (stock.changePercent || 0) < 0;
   // V49.2: Dynamic Shrinking Limit
   const isAmbushShrinking = (stock.turnoverRate || 0) < shrinkLimit;
-  const isAmbushMoneyIn = (stock.mainForceInflow || 0) > 0;
+  const isAmbushMoneyIn = isVerifiedLargeOrderInflow;
   const isAmbushRsiBuilding = (tech.rsi?.rsi6 || 0) > (tech.rsi?.rsi12 || 0) && (tech.rsi?.rsi6 || 0) > (isAgile ? 50 : 35);
   
   let isAmbush = false;
   if (isAmbushLowPos && isAmbushShrinking && isAmbushMoneyIn && isAmbushRsiBuilding && !isBottomSignal) {
       isAmbush = true;
-      synthesisDesc = `【隐形伏击】股价低位缩量(换手<${shrinkLimit}%)横盘，但主力资金持续暗中吸筹。`;
+      synthesisDesc = `【隐形伏击】股价低位缩量(换手<${shrinkLimit}%)横盘，同时供应商大单净额为正。`;
       score += 5;
   }
 
@@ -884,13 +888,13 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
           if (mfProfitRatio >= TH_SAFE && mfProfitRatio <= TH_PROFIT) {
                // V45.5 UPDATE: Real-time Fleeing Veto
                // If main force is dumping (Distribute) or net outflow is huge, NO Protection.
-               if (intent === 'Distribute' || (stock.mainForceInflow || 0) < -3000) { // -3000万
+               if (intent === 'Distribute' || (largeOrderNetYuan || 0) < -30_000_000) {
                     return {
                         title: "主力出逃 (破位)",
                         color: "bg-red-950 from-red-900 to-black border-red-800 shadow-red-900/50",
                         textColor: "text-red-400 animate-pulse",
                         icon: <TrendingDown className="w-8 h-8 text-red-500 animate-bounce" />,
-                        advice: `【态势】股价跌至成本线，但资金面严重恶化。\n【内幕】检测到主力正在借"支撑位"掩护出货(流出${((stock.mainForceInflow||0)/10000).toFixed(1)}亿)，意图(${intent})为派发。\n【指令】"护盘"是假，出货是真。支撑已无效，立即止损。`
+                        advice: `【态势】股价跌至成本线，但资金面严重恶化。\n【证据】供应商大单净额为 ${formatCapitalFlowYuan(largeOrderNetYuan)}，盘口意图(${intent})为派发。\n【指令】支撑的有效性已下降，优先执行止损纪律。`
                     };
                }
 
@@ -1106,8 +1110,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
 
       // Pump & Dump (V46.6: Promoted to Tier 1)
       if ((stock.changePercent || 0) > 5 && localMetrics) {
-          const moneyIn = stock.mainMoneyIn || 0;
-          const fRatio = turnoverAmt > 0 ? (moneyIn / turnoverAmt) : 0;
+          const fRatio = flowRatio || 0;
           const isDiverging = fRatio < (-0.05 * riskTolerance); 
           if (isDiverging) {
                return {
@@ -1115,7 +1118,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                   color: "bg-purple-900 from-purple-900 to-black border-purple-700 shadow-purple-900/50",
                   textColor: "text-purple-400 animate-pulse",
                   icon: <UserMinus className="w-8 h-8 text-purple-500" />,
-                  advice: `【态势】股价大幅拉升，看似走势强劲。\n【内幕】主力资金呈现显著背离 (净流出占比 ${(Math.abs(fRatio)*100).toFixed(1)}%)。量价背离严重，是典型的诱多出货。\n【指令】极易上演"一日游"行情，AI监测到主力出逃，建议利用冲高机会分批止盈。`
+                  advice: `【态势】股价大幅拉升，但供应商大单净额为负。\n【证据】大单净流出占成交额 ${(Math.abs(fRatio)*100).toFixed(1)}%，与价格上涨方向背离。\n【指令】冲高回落风险较高，优先分批止盈。`
               };
           }
       }
@@ -1431,7 +1434,19 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       };
   };
 
-  const signal = getSignalVisuals();
+  let signal = getSignalVisuals();
+  const diagnosisRiskSignal = ['出逃', '止损', '诱多', '埋人', '核按钮', '烂板', '炸板', '拉高出货', '离场', '撤退', '天量', '避险', '风险', '陷阱']
+      .some(keyword => signal.title.includes(keyword));
+  if (!isActionableBullishPrediction(stock.aiPrediction?.prediction) && !diagnosisRiskSignal) {
+      const prediction = stock.aiPrediction?.prediction;
+      signal = {
+          title: "证据不足 (WAIT)",
+          color: "bg-slate-900 from-slate-900 to-black border-slate-700",
+          textColor: "text-slate-200",
+          icon: <ShieldCheck className="w-8 h-8 text-slate-300" />,
+          advice: `【态势】当前个股数据可靠度为${prediction?.dataReliability || 'LOW'}，市场状态为${prediction?.marketDataStatus || 'UNAVAILABLE'}。\n【证据】非重叠滚动验证样本 ${prediction?.sampleSize || 0} 笔；至少10笔且形成正期望后才允许输出买入结论。\n【指令】保持观察，不依据量价估算成本或单一资金因子开仓。`
+      };
+  }
   
   // V21.5: T+1 Overnight Deduction
   // Calculate potential based on real-time metrics, with entropy fallback for missing data
@@ -1995,16 +2010,16 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                             <Progress value={overnight.score} className="h-1.5 bg-slate-100" indicatorClassName={overnight.score >= 80 ? "bg-red-500" : overnight.score >= 60 ? "bg-orange-500" : "bg-blue-500"} />
                         </div>
                         <div className="space-y-1">
-                            <div className="text-xs font-bold text-slate-400">晋级概率</div>
+                            <div className="text-xs font-bold text-slate-400">晋级等级</div>
                             <div className={cn("text-xl md:text-2xl font-black", overnight.score >= 70 ? "text-red-600" : "text-slate-700")}>
                                 {overnight.probability}
                             </div>
-                            <div className="text-[10px] text-slate-400 font-medium">模型置信度 85%</div>
+                            <div className="text-[10px] text-slate-400 font-medium">规则评分，非统计概率</div>
                         </div>
                         <div className="space-y-1">
                             <div className="text-xs font-bold text-slate-400">预期开盘</div>
                             <div className="text-xl md:text-2xl font-black font-mono text-slate-800">{overnight.expectedOpen}</div>
-                            <div className="text-[10px] text-slate-400 font-medium">基于竞价模拟</div>
+                            <div className="text-[10px] text-slate-400 font-medium">基于量价规则推演</div>
                         </div>
                         <div className="space-y-1">
                             <div className="text-xs font-bold text-slate-400">核心指令</div>
@@ -2017,22 +2032,25 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                     <div className="px-6 py-4 border-b border-slate-50 bg-slate-50/50 flex items-center justify-between">
                         <div className="flex items-center gap-2">
                             <Swords className="w-5 h-5 text-slate-800" />
-                            <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">主力博弈底牌 (FUND FLOW)</h3>
+                            <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">量价成本结构 (ESTIMATE)</h3>
                         </div>
                         <Badge variant="secondary" className={cn("font-bold", gameState.color, gameState.bg)}>
                             {gameState.status}
                         </Badge>
                     </div>
                     <div className="p-6">
+                         <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-bold leading-relaxed text-amber-800">
+                           本区成本与持仓状态来自量价模型估算，并非机构持仓数据；供应商大单净额单独展示，不能用于识别具体参与者。
+                         </div>
                          <div className="flex flex-col md:flex-row gap-8 items-center">
                              <div className="flex-1 w-full space-y-6">
                                  <div className="flex items-end justify-between">
                                      <div>
-                                         <div className="text-xs font-bold text-slate-400 mb-1">主力估算成本</div>
+                                         <div className="text-xs font-bold text-slate-400 mb-1">量价估算成本</div>
                                          <div className="text-2xl font-black font-mono text-slate-700">¥{estimatedMFCost.toFixed(2)}</div>
                                      </div>
                                      <div className="text-right">
-                                         <div className="text-xs font-bold text-slate-400 mb-1">当前主力浮盈</div>
+                                         <div className="text-xs font-bold text-slate-400 mb-1">现价相对偏离</div>
                                          <div className={cn("text-2xl font-black font-mono", mfProfitRatio > 0 ? "text-red-500" : "text-blue-500")}>
                                              {mfProfitRatio > 0 ? "+" : ""}{mfProfitRatio.toFixed(2)}%
                                          </div>
@@ -2049,9 +2067,9 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                      ></div>
                                  </div>
                                  <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                     <span>主力被套(安全)</span>
-                                     <span>成本线</span>
-                                     <span>主力获利(危险)</span>
+                                     <span>低于估算成本</span>
+                                     <span>估算成本线</span>
+                                     <span>高于估算成本</span>
                                  </div>
 
                                  {/* v44.0 KDJ & Trading Trajectory Visualization */}
@@ -2205,7 +2223,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                 <Crosshair className="w-6 h-6" />
                             </div>
                             <div>
-                                <h4 className="text-base font-black italic uppercase tracking-tight">主力意图雷达</h4>
+                                <h4 className="text-base font-black italic uppercase tracking-tight">盘口意图模型</h4>
                                 <div className="flex items-center gap-2 mt-1">
                                     <Badge variant="outline" className={cn("text-[10px] border-none px-1.5", 
                                         intent === 'Distribute' ? "bg-red-900/50 text-red-200" : 
@@ -2217,9 +2235,26 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                             </div>
                         </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4 relative z-10">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 relative z-10">
                          <div className="p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50">
-                             <span className="text-[9px] font-black text-slate-500 uppercase block mb-1">暗盘资金</span>
+                             <span className="text-[9px] font-black text-slate-500 uppercase block mb-1">供应商大单净额</span>
+                             <div className="flex items-end justify-between gap-2">
+                                 <span className={cn(
+                                   "text-base font-mono font-bold",
+                                   largeOrderNetYuan === undefined ? "text-slate-500" : largeOrderNetYuan > 0 ? "text-red-400" : "text-emerald-400"
+                                 )}>
+                                     {formatCapitalFlowYuan(largeOrderNetYuan)}
+                                 </span>
+                                 <span className={cn(
+                                   "text-[8px] font-black",
+                                   capitalFlow.signal === 'CONFLICT' ? "text-amber-400" : "text-slate-500"
+                                 )}>
+                                   {capitalFlow.signal === 'CONFLICT' ? '量价冲突' : capitalFlow.source === 'NONE' || capitalFlow.source === 'OHLCV_PROXY' ? '缺失' : 'f62'}
+                                 </span>
+                             </div>
+                         </div>
+                         <div className="p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+                             <span className="text-[9px] font-black text-slate-500 uppercase block mb-1">隐性承接评分</span>
                              <div className="flex items-end justify-between">
                                  <span className={cn("text-xl font-mono font-bold", localMetrics?.darkPoolMoney > 60 ? "text-emerald-400" : "text-slate-400")}>
                                      {localMetrics?.darkPoolMoney.toFixed(0) || 0}
@@ -2228,7 +2263,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                              </div>
                          </div>
                          <div className="p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50">
-                             <span className="text-[9px] font-black text-slate-500 uppercase block mb-1">主力筹码</span>
+                             <span className="text-[9px] font-black text-slate-500 uppercase block mb-1">盘口集中度</span>
                              <div className="flex items-end justify-between">
                                  <span className={cn("text-xl font-mono font-bold", localMetrics?.mainForceChips > 60 ? "text-red-400" : "text-slate-400")}>
                                      {localMetrics?.mainForceChips.toFixed(0) || 0}

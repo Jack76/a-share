@@ -3,6 +3,7 @@ import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Zap, ShieldAlert, Crosshair, TrendingUp, TrendingDown, Terminal, Activity, Flame, Target, ShieldCheck, Sword } from 'lucide-react';
 import { Stock } from '../types';
 import { cn } from './ui/utils';
+import { getDirectLargeOrderNetYuan } from '../utils/capitalFlow';
 
 interface BattleEvent {
     id: string;
@@ -54,7 +55,7 @@ export const QuantumBattleReport: React.FC<Props> = ({ stocks, metrics, phase = 
           color = "text-emerald-400";
           list = stocks
               .filter(s => s.aiPrediction?.trend === 'Rebound' || (s.changePercent || 0) > 0)
-              .sort((a, b) => (b.mainForceInflow || 0) - (a.mainForceInflow || 0))
+              .sort((a, b) => (getDirectLargeOrderNetYuan(b) || 0) - (getDirectLargeOrderNetYuan(a) || 0))
               .slice(0, 4);
       } else {
           title = "空间龙表现 (Dragon Performance)";
@@ -76,14 +77,14 @@ export const QuantumBattleReport: React.FC<Props> = ({ stocks, metrics, phase = 
     const list: BattleEvent[] = [];
     const now = new Date();
     
-    // Simulate real-time events based on stock metrics
+    // Derive event labels from observed stock metrics.
     stocks.forEach(s => {
         if ((s.volumeRatio || 0) > 3 && (s.changePercent || 0) > 5) {
             list.push({
                 id: `${s.id}-atk`,
                 type: 'ATTACK',
                 priority: 'CRITICAL',
-                source: '主力大单',
+                source: '量价突破',
                 target: s.name,
                 description: `点火成功！分时放量突破关键压力位，多头攻势猛烈。`,
                 time: now.toLocaleTimeString().slice(0, 8)
@@ -95,9 +96,9 @@ export const QuantumBattleReport: React.FC<Props> = ({ stocks, metrics, phase = 
                 id: `${s.id}-ret`,
                 type: 'RETREAT',
                 priority: 'CRITICAL',
-                source: '获利资金',
+                source: '量价背离',
                 target: s.name,
-                description: `检测到 Alpha 背离！股价虚拉，主力正在暗中撤退。`,
+                description: `检测到 Alpha 背离：价格上涨但量能支持不足，回落风险上升。`,
                 time: now.toLocaleTimeString().slice(0, 8)
             });
         }

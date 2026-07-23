@@ -53,6 +53,7 @@ import { calculateRealtimeMetrics } from "../utils/realtimeAnalysis";
 import { detectBlackSwan, shouldOverrideSignal } from "../utils/blackSwanDetector";
 import { calculateThemeBreadthConsensus, normalizeMarketConcept } from '../utils/marketConcepts';
 import type { MarketRefreshStatus } from '../utils/dataHealth';
+import { getDirectLargeOrderNetYuan } from '../utils/capitalFlow';
 
 interface TradingState {
   stocks?: Stock[];
@@ -166,11 +167,11 @@ const isChinaMarketSession = (date = new Date()) => {
 };
 
 const isMarketStatsUsable = (snapshot: MarketStatsSnapshot | null): snapshot is MarketStatsSnapshot => {
-  if (!snapshot || snapshot.totalCount < 4_000) return false;
+  if (!snapshot || snapshot.totalCount < 1_000) return false;
   const directionalCoverage = (
     snapshot.upCount + snapshot.downCount + snapshot.flatCount
   ) / Math.max(1, snapshot.totalCount);
-  if (directionalCoverage < 0.85) return false;
+  if (directionalCoverage < 0.75) return false;
 
   const quality = snapshot.quality;
   if (!quality) return false;
@@ -178,9 +179,9 @@ const isMarketStatsUsable = (snapshot: MarketStatsSnapshot | null): snapshot is 
   const sourceIsFreshEnough = !Number.isFinite(quality.sourceAgeMs) ||
     (quality.sourceAgeMs || 0) <= maxSourceAgeMs;
   return quality.status !== 'UNAVAILABLE' &&
-    quality.coverage >= 0.85 &&
-    quality.segmentsSucceeded >= 4 &&
-    getMarketStatsAge(snapshot) <= 60_000 &&
+    quality.coverage >= 0.75 &&
+    quality.segmentsSucceeded >= 2 &&
+    getMarketStatsAge(snapshot) <= 120_000 &&
     sourceIsFreshEnough;
 };
 
@@ -367,11 +368,13 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           volumeRatio: intraday?.volumeStructure
             ? (intraday.volumeStructure.avgVol5 > 0 ? intraday.volumeStructure.lastVol / intraday.volumeStructure.avgVol5 : undefined)
             : (s.auctionData?.volumeRatio || undefined),
-          netInflow: s.mainForceInflow || s.mainMoneyIn || undefined,
+          largeOrderNetYuan: getDirectLargeOrderNetYuan(s),
           isHeavyVolume: intraday?.volumeStructure?.isHeavy || false,
         };
         // Only inject if we have meaningful data (avoid noise from empty contexts)
-        const hasMicroData = microContext.macdfs !== 'None' || microContext.volumeRatio !== undefined || microContext.netInflow !== undefined;
+        const hasMicroData = microContext.macdfs !== 'None' ||
+          microContext.volumeRatio !== undefined ||
+          microContext.largeOrderNetYuan !== undefined;
 
         // V64.0: Pass event-driven context (传导时滞修正)
         const signal = analyzeStockSignal(
@@ -509,7 +512,8 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     moneyQualityScore, sealIntensity, boardResilience, resonanceFactor,
                     exhaustionSignal, isThemeDropout,
                     // Real-time price data (re-fetched)
-                    volume, turnoverRate, mainForceInflow, mainMoneyIn, committeeRatio,
+                    volume, turnoverRate, largeOrderNetYuan, largeOrderNetSource,
+                    largeOrderNetAsOf, mainMoneyIn, committeeRatio,
                     avgVolume, sealAmount, bigBuyAmount,
                     // V66.5: Additional transient fields missed in V63.1
                     sealQualityScore, liquidityEntropy, consecutiveLimitUps,

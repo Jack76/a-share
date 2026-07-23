@@ -214,6 +214,9 @@ test('unavailable market breadth forces reliability low and contracts confidence
 
   assert.equal(result.marketRegime, 'UNKNOWN');
   assert.equal(result.marketDataQuality, 0);
+  assert.equal(result.dataReliability, 'HIGH');
+  assert.equal(result.marketDataReliability, 'LOW');
+  assert.equal(result.marketDataStatus, 'UNAVAILABLE');
   assert.equal(result.reliability, 'LOW');
   assert.ok(result.probability <= 62);
   assert.match(result.warnings.join(' '), /全市场环境数据不可用/);

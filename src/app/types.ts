@@ -128,7 +128,6 @@ export interface Stock {
   volumeRatio?: number; // Added for Fund Analysis
   volRatio?: number; // Legacy alias
   turnoverRate?: number;
-  mainForceInflow?: number; // Main Force Net Inflow (Millions) - Hunter V5.0
   lastUpdate?: string;
   theme?: string;
   
@@ -148,7 +147,11 @@ export interface Stock {
   limitUpTime?: string;         // 涨停时间 (HH:mm)
   breakCount?: number;          // 炸板次数
   bigBuyAmount?: number;        // 大单买入金额
-  mainMoneyIn?: number;         // 主力资金净流入
+  largeOrderNetYuan?: number;   // 大单+超大单净额（元），不是机构身份识别
+  largeOrderNetSource?: 'eastmoney-f62';
+  largeOrderNetAsOf?: string;
+  /** @deprecated 旧行情接口兼容字段，单位为元。 */
+  mainMoneyIn?: number;
   buyVolume?: number;           // 外盘（主动买入）
   sellVolume?: number;          // 内盘（主动卖出）
   bidAmount?: number;           // 买盘挂单量（买一至买五）
@@ -260,7 +263,9 @@ export interface Stock {
         rawProbability?: number;
         dataQuality?: number;
         reliability?: 'LOW' | 'MEDIUM' | 'HIGH';
-        dataReliability?: 'LOW' | 'MEDIUM' | 'HIGH';
+        dataReliability?: 'LOW' | 'MEDIUM' | 'HIGH'; // 个股K线与技术数据
+        marketDataReliability?: 'LOW' | 'MEDIUM' | 'HIGH';
+        marketDataStatus?: 'FRESH' | 'PARTIAL' | 'STALE' | 'UNAVAILABLE';
         evidenceReliability?: 'LOW' | 'MEDIUM' | 'HIGH';
         calibrationStatus?: 'UNVALIDATED' | 'LIMITED' | 'OUT_OF_SAMPLE';
         sampleSize?: number;

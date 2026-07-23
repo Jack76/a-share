@@ -14,6 +14,7 @@ import {
 } from "./predictionCalibration";
 import { calculateLimitState, resolveLimitPercent } from '../../shared/marketRules';
 import { getChinaTradingClock, type MarketTimestamp } from './marketClock';
+import { assessCapitalFlow } from './capitalFlow';
 
 export interface EngineRuntimeContext {
   timestamp: MarketTimestamp;
@@ -75,6 +76,8 @@ export interface PredatorSignal {
     dataQuality?: number;
     reliability?: PredictionReliability;
     dataReliability?: PredictionReliability;
+    marketDataReliability?: PredictionReliability;
+    marketDataStatus?: 'FRESH' | 'PARTIAL' | 'STALE' | 'UNAVAILABLE';
     evidenceReliability?: PredictionReliability;
     calibrationStatus?: CalibrationStatus;
     sampleSize?: number;
@@ -118,7 +121,7 @@ export interface PredatorSignal {
 export interface MicroStructureContext {
   macdfs?: "GoldenCross" | "DeadCross" | "None";
   volumeRatio?: number; // 量比
-  netInflow?: number; // 主力净流入 (万)
+  largeOrderNetYuan?: number; // 大单+超大单净额（元）
   isHeavyVolume?: boolean; // 分时是否放量
 }
 
@@ -466,13 +469,14 @@ export const analyzeStockSignal = (
 
   // V16.1 Fix: Use Relative Flow Ratio for Hollow Rise
   // TH_HOLLOW_FLOW is now a ratio (e.g. -0.05)
-  const estTurnover = stock.turnover || volume * current || 1;
-  const flowRatio = stock.mainForceInflow
-    ? stock.mainForceInflow / estTurnover
-    : 0;
+  const flowAssessment = assessCapitalFlow(stock);
+  const flowRatio = flowAssessment.signal === 'CONFLICT'
+    ? undefined
+    : flowAssessment.directRatio;
   const isHollowRise =
     isMainRole &&
     (stock.changePercent || 0) > 4 &&
+    flowRatio !== undefined &&
     flowRatio < TH_HOLLOW_FLOW;
 
   const isHighBias = ma5 > 0 && current > ma5 * TH_BIAS_HIGH;
@@ -906,7 +910,7 @@ export const analyzeStockSignal = (
     isPassiveAbsorption = true;
     stealthScore += 25;
 
-    if (microContext?.netInflow && microContext.netInflow > 0) {
+    if (microContext?.largeOrderNetYuan && microContext.largeOrderNetYuan > 0) {
       score += 15;
       adviceText += " [压单吃货迹象]";
     } else {
@@ -919,8 +923,8 @@ export const analyzeStockSignal = (
   if (
     committeeRatio > 0.3 &&
     (stock.changePercent || 0) < 3 &&
-    microContext?.netInflow &&
-    microContext.netInflow < -2000
+    microContext?.largeOrderNetYuan &&
+    microContext.largeOrderNetYuan < -20_000_000
   ) {
     score -= 20;
     adviceText += " [托单出货嫌疑]";
@@ -994,7 +998,7 @@ export const analyzeStockSignal = (
 
   // --- 6.1 V10.0 Micro-Structure Injection (分时微观数据修正) ---
   if (microContext) {
-    const { macdfs, volumeRatio, netInflow, isHeavyVolume } =
+    const { macdfs, volumeRatio, largeOrderNetYuan, isHeavyVolume } =
       microContext;
 
     // 1. MACDFS 共振
@@ -1029,37 +1033,37 @@ export const analyzeStockSignal = (
     // 原逻辑：跌得越狠+买得越多 = 加分越高 (容易接飞刀)
     // 新逻辑：只有在支撑位(MA20)附近的吸筹才是有效的。破位吸筹视为"被动接盘"或"诱多"。
     
-    // 如果股价跌但主力大举买入
+    // 如果股价跌但供应商大单净额显著为正
     if (
       (stock.changePercent || 0) < 0 &&
-      netInflow &&
-      netInflow > 3000
+      largeOrderNetYuan &&
+      largeOrderNetYuan > 30_000_000
     ) {
       if (current > ma20) {
           // 趋势支撑有效，视为良性回踩吸筹
           score += 15;
-          adviceText += " [支撑位吸筹]";
+          adviceText += " [支撑位大单流入]";
       } else {
-          // 趋势破位，资金流入可能是主力自救或被动挂单成交，极度危险
+          // 趋势破位，大单流入也可能是被动挂单成交
           score -= 20; 
           adviceText += " [破位接飞刀风险]";
           // 此分支进入时信号已经不是买入，继续保持防守。
       }
     }
-    // 如果股价涨但主力大举出逃 -> 空涨
+    // 如果股价涨但供应商大单净额显著为负 -> 空涨
     else if (
       (stock.changePercent || 0) > 5 &&
-      netInflow &&
-      netInflow < -5000
+      largeOrderNetYuan &&
+      largeOrderNetYuan < -50_000_000
     ) {
       // <-5000万
       score -= 25;
-      adviceText += " [主力大单出逃]";
+      adviceText += " [大单净流出]";
     }
     // V53.0 新增：滞涨陷阱 (资金大买但股价不涨)
     else if (
-        netInflow && 
-        netInflow > 5000 && 
+        largeOrderNetYuan &&
+        largeOrderNetYuan > 50_000_000 &&
         (stock.changePercent || 0) > -1 && 
         (stock.changePercent || 0) < 2 &&
         (stock.turnoverRate || 0) > 10
@@ -1556,7 +1560,8 @@ export const analyzeStockSignal = (
     // 这可能是"T字板"洗盘，是极强的买点，而非卖点。
     const brokenDepth = limitUpPrice > 0 ? (limitUpPrice - current) / limitUpPrice : 0;
     const isHovering = brokenDepth < 0.04 && brokenDepth > 0; // 仅回撤 4% 以内
-    const isResealing = microContext?.netInflow && microContext.netInflow > 1000; // 有资金回流抢筹
+    const isResealing = microContext?.largeOrderNetYuan &&
+      microContext.largeOrderNetYuan > 10_000_000; // 有大单回流抢筹
     const isHealthyVolume = (stock.turnoverRate || 0) < 35; // 换手没有失控
 
     if (
@@ -1701,7 +1706,7 @@ export const analyzeStockSignal = (
   else if (isHollowRise) {
     signalType = "SELL";
     signalTitle = "空涨 (HOLLOW)";
-    adviceText = `[中军诱多]股价拉升但主力大幅流出 (净流出占比 > ${(Math.abs(TH_HOLLOW_FLOW) * 100).toFixed(1)}%)。掩护出货行为，分批离场。`;
+    adviceText = `[中军诱多]股价拉升但供应商大单净额显著为负 (占成交额 > ${(Math.abs(TH_HOLLOW_FLOW) * 100).toFixed(1)}%)。价格与大单方向背离，建议分批离场。`;
     recommendedSell = current;
     expectedDirection = "DOWN";
   }
@@ -3340,6 +3345,8 @@ export const analyzeStockSignal = (
       dataQuality: calibratedPrediction.dataQuality,
       reliability: calibratedPrediction.reliability,
       dataReliability: calibratedPrediction.dataReliability,
+      marketDataReliability: calibratedPrediction.marketDataReliability,
+      marketDataStatus: calibratedPrediction.marketDataStatus,
       evidenceReliability: calibratedPrediction.evidenceReliability,
       calibrationStatus: calibratedPrediction.calibrationStatus,
       sampleSize: calibratedPrediction.sampleSize,

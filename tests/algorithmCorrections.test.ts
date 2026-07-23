@@ -134,3 +134,27 @@ test('negative out-of-sample evidence vetoes a BUY signal', () => {
   });
   assert.match(reason || '', /未形成正期望/);
 });
+
+test('a BUY signal without enough non-overlapping validation samples is vetoed', () => {
+  const missing = getBuySignalVetoReason({
+    signalType: 'BUY',
+    direction: 'UP',
+    probability: 80,
+    trapDetected: false,
+  });
+  const insufficient = getBuySignalVetoReason({
+    signalType: 'BUY',
+    direction: 'UP',
+    probability: 80,
+    trapDetected: false,
+    backtest: {
+      sampleSize: 9,
+      winRate: 70,
+      profitFactor: 1.5,
+      expectancy: 1,
+    },
+  });
+
+  assert.match(missing || '', /不足10笔/);
+  assert.match(insufficient || '', /不足10笔/);
+});

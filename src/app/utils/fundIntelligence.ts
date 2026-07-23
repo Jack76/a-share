@@ -1,4 +1,5 @@
 import { Stock } from '../types';
+import { getDirectLargeOrderNetYuan } from './capitalFlow';
 
 // V15.0 FUND PANTHEON: 12 Types of Market Participants
 export type FundType = 
@@ -312,7 +313,8 @@ export const detectFundIdentity = (stock: Stock): { profile: FundBehaviorProfile
     }
 
     // D. Institution: 机构风格 (大单流入 + 低换手涨停 or Main Role)
-    if (notes.includes('机构') || (stock.role === 'Main' && turnoverRate < 10) || (stock.mainForceInflow && stock.mainForceInflow > 50000000 && turnoverRate < 5)) {
+    const largeOrderNetYuan = getDirectLargeOrderNetYuan(stock);
+    if (notes.includes('机构') || (stock.role === 'Main' && turnoverRate < 10) || ((largeOrderNetYuan || 0) > 50_000_000 && turnoverRate < 5)) {
         return { profile: FUND_PROFILES['MutualFund'], detectedName: '机构/公募' };
     }
 

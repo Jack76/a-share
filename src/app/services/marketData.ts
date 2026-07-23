@@ -17,6 +17,8 @@ const MARKET_STATS_CACHE_TTL = 5000;
 // In-flight request deduplication
 const inFlightRequests = new Map<string, Promise<any>>();
 const marketStatsCache = new Map<string, { data: MarketStatsSnapshot; timestamp: number }>();
+const historyUpgradeAttempted = new Set<string>();
+const PREFERRED_STOCK_HISTORY_BARS = 600;
 let lastGoodThemes: { data: Theme[]; timestamp: number } | null = null;
 let lastGoodIndices: { data: MarketIndex[]; timestamp: number } | null = null;
 
@@ -269,10 +271,13 @@ export const fetchStockHistoryBatch = async (codes: string[]): Promise<Record<st
            return;
       }
 
-      // Check 2: Quantity (Relaxed for new stocks)
-      // V8.5 Fix: If data is FRESH but short, DO NOT re-fetch. This stops the "Death Loop".
-      // We only re-fetch if it's extremely short AND not fresh, or if it's completely missing.
-      if (history.length < 5 && !isFresh) {
+      // Upgrade old 300-bar caches once per page session. Newly listed stocks
+      // may legitimately have less history, so never loop on the same code.
+      const shouldUpgradeHistory = history.length < PREFERRED_STOCK_HISTORY_BARS &&
+        !historyUpgradeAttempted.has(code);
+      if (shouldUpgradeHistory) historyUpgradeAttempted.add(code);
+
+      if (history.length < 5 || shouldUpgradeHistory) {
           insufficientDataCodes.push(code);
       } else {
           validLocalData[code] = history;
@@ -748,12 +753,12 @@ export const fetchMarketStats = async (includeList = false): Promise<MarketStats
 
       const json = await resp.json();
       const result = json.data as MarketStatsSnapshot | null;
-      if (!result || !Number.isFinite(result.totalCount) || result.totalCount < 4_000) return null;
+      if (!result || !Number.isFinite(result.totalCount) || result.totalCount < 1_000) return null;
 
       const directionalCoverage = (
         result.upCount + result.downCount + result.flatCount
       ) / Math.max(1, result.totalCount);
-      if (directionalCoverage < 0.85 || result.quality?.status === 'UNAVAILABLE') return null;
+      if (directionalCoverage < 0.75 || result.quality?.status === 'UNAVAILABLE') return null;
 
       marketStatsCache.set(cacheKey, { data: result, timestamp: Date.now() });
       if (includeList) setLocalMarketSnapshot(result);

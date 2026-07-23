@@ -13,41 +13,66 @@ interface Props {
 }
 
 export const VolumeProfileChart: React.FC<Props> = ({ stock }) => {
-  // Use stock data to derive a more realistic volume profile
   const currentPrice = stock.currentPrice || 10;
   const history = stock.history || [];
-  
-  // Logic: Identify actual price peaks/valleys from history to place "chip" concentrations
-  const historicalHighs = history.length > 0 ? history.map(h => h.high) : [currentPrice * 1.05];
-  const historicalLows = history.length > 0 ? history.map(h => h.low) : [currentPrice * 0.95];
-  
-  // Create 15 buckets around current price
-  const data = Array.from({ length: 15 }, (_, i) => {
-    const price = currentPrice * (0.9 + i * 0.015);
-    const relativePrice = i - 7; // 0 is current price index
-    
-    // Base volume follows a bell curve centered at current price (simulating recent accumulation)
-    const baseVolume = 100 * Math.exp(-Math.pow(relativePrice, 2) / 30);
-    
-    // Add "peaks" where historical price action occurred (Support/Resistance)
-    let peakEffect = 0;
-    historicalHighs.forEach(h => {
-        if (Math.abs(price - h) < currentPrice * 0.01) peakEffect += 30;
-    });
-    historicalLows.forEach(l => {
-        if (Math.abs(price - l) < currentPrice * 0.01) peakEffect += 20;
+  const profile = React.useMemo(() => {
+    const bars = history.slice(-60).filter(bar =>
+      Number.isFinite(bar.close) && Number.isFinite(bar.volume) && (bar.volume || 0) > 0
+    );
+    if (bars.length < 10) {
+      return { data: [] as Array<{ price: string; volume: number; isCurrent: boolean; isPeak: boolean }>, concentration: undefined, range: undefined };
+    }
+
+    const minimum = Math.min(...bars.map(bar => bar.low || bar.close));
+    const maximum = Math.max(...bars.map(bar => bar.high || bar.close));
+    if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || maximum <= minimum) {
+      return { data: [], concentration: undefined, range: undefined };
+    }
+
+    const binCount = 15;
+    const binSize = (maximum - minimum) / binCount;
+    const volumes = Array.from({ length: binCount }, () => 0);
+    bars.forEach(bar => {
+      const lowIndex = Math.max(0, Math.min(binCount - 1, Math.floor(((bar.low || bar.close) - minimum) / binSize)));
+      const highIndex = Math.max(lowIndex, Math.min(binCount - 1, Math.floor(((bar.high || bar.close) - minimum) / binSize)));
+      const spread = highIndex - lowIndex + 1;
+      for (let index = lowIndex; index <= highIndex; index++) {
+        volumes[index] += (bar.volume || 0) / spread;
+      }
     });
 
-    return {
-      price: price.toFixed(2),
-      volume: Math.max(10, baseVolume + Math.min(60, peakEffect)),
-      isCurrent: i === 7,
-      isPeak: peakEffect > 25
-    };
-  });
+    const total = volumes.reduce((sum, value) => sum + value, 0);
+    const average = total / binCount;
+    const currentIndex = Math.max(0, Math.min(binCount - 1, Math.floor((currentPrice - minimum) / binSize)));
+    const data = volumes.map((volume, index) => ({
+      price: (minimum + (index + 0.5) * binSize).toFixed(2),
+      volume,
+      isCurrent: index === currentIndex,
+      isPeak: volume >= average * 1.35,
+    }));
+    const concentration = total > 0
+      ? volumes.slice().sort((a, b) => b - a).slice(0, 3).reduce((sum, value) => sum + value, 0) / total * 100
+      : undefined;
 
-  const concentrationIndex = ((stock.moneyQualityScore || 80) / 8).toFixed(1); 
-  const cost90Range = [currentPrice * 0.94, currentPrice * 1.06];
+    let cumulative = 0;
+    let lower = minimum;
+    let upper = maximum;
+    let lowerFound = false;
+    let upperFound = false;
+    volumes.forEach((volume, index) => {
+      cumulative += volume;
+      if (total > 0 && cumulative / total >= 0.05 && !lowerFound) {
+        lower = minimum + index * binSize;
+        lowerFound = true;
+      }
+      if (total > 0 && cumulative / total >= 0.95 && !upperFound) {
+        upper = minimum + (index + 1) * binSize;
+        upperFound = true;
+      }
+    });
+    return { data, concentration, range: [lower, upper] as [number, number] };
+  }, [currentPrice, history]);
+  const { data, concentration, range: cost90Range } = profile;
 
   return (
     <Card className="border border-slate-200 shadow-sm bg-white overflow-hidden">
@@ -55,7 +80,7 @@ export const VolumeProfileChart: React.FC<Props> = ({ stock }) => {
         <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center justify-between">
             <div className="flex items-center gap-2">
                 <Layers className="w-3.5 h-3.5 text-blue-600" />
-                筹码分布模拟 (Volume Profile)
+                近60日成交分布 (Volume Profile)
             </div>
             <Target className="w-3.5 h-3.5 text-slate-300" />
         </CardTitle>
@@ -68,7 +93,7 @@ export const VolumeProfileChart: React.FC<Props> = ({ stock }) => {
                     <span className="text-[9px] font-black text-blue-600 uppercase tracking-widest">筹码集中度</span>
                 </div>
                 <div className="text-lg font-black font-mono tracking-tighter text-blue-900">
-                    {concentrationIndex}%
+                    {concentration === undefined ? '--' : `${concentration.toFixed(1)}%`}
                 </div>
             </div>
             <div className="p-3 rounded-xl bg-purple-50/50 border border-purple-100">
@@ -77,7 +102,7 @@ export const VolumeProfileChart: React.FC<Props> = ({ stock }) => {
                     <span className="text-[9px] font-black text-purple-600 uppercase tracking-widest">90% 成本区间</span>
                 </div>
                 <div className="text-[11px] font-black font-mono tracking-tighter text-purple-900 leading-none mt-1.5">
-                    ¥{cost90Range[0].toFixed(2)} - ¥{cost90Range[1].toFixed(2)}
+                    {cost90Range ? `¥${cost90Range[0].toFixed(2)} - ¥${cost90Range[1].toFixed(2)}` : '--'}
                 </div>
             </div>
         </div>
@@ -94,7 +119,7 @@ export const VolumeProfileChart: React.FC<Props> = ({ stock }) => {
                                 return (
                                     <div className="bg-slate-900 text-white p-2 rounded shadow-xl border border-slate-800">
                                         <p className="text-[10px] font-black">Price: ¥{payload[0].payload.price}</p>
-                                        <p className="text-[9px] font-medium text-slate-400">Chip Conc: {Number(payload[0].value || 0).toFixed(0)}%</p>
+                                        <p className="text-[9px] font-medium text-slate-400">成交量: {Number(payload[0].value || 0).toFixed(0)} 手</p>
                                     </div>
                                 );
                             }
@@ -124,7 +149,7 @@ export const VolumeProfileChart: React.FC<Props> = ({ stock }) => {
                 <span className="text-[9px] font-black text-slate-500 uppercase">Support/Res</span>
             </div>
             <div className="flex items-center gap-1 text-[9px] font-black text-slate-400 italic">
-                <Lock className="w-2.5 h-2.5" /> Stability: {((stock.strengthScore || 70) * 0.9 + 10).toFixed(0)}%
+                <Lock className="w-2.5 h-2.5" /> 样本: {Math.min(history.length, 60)}日
             </div>
         </div>
       </CardContent>

@@ -475,7 +475,6 @@ api.get("/market/themes", async (c) => {
                                   isLimitDown: limitState.isLimitDown,
                                   lastUpdate: data[30],
                                   sourceAsOf: parseTencentQuoteTimestamp(data[30]),
-                                  mainMoneyIn: 0, // Default
                                   // V18.0: Real-time Order Book & Flow for Decoy Analysis
                                   buyVolume: parseFloat(data[7]),   // Active Buy (Outer)
                                   sellVolume: parseFloat(data[8]),  // Active Sell (Inner)
@@ -518,7 +517,9 @@ api.get("/market/themes", async (c) => {
                                   
                                   if (matchedKey && results[matchedKey]) {
                                       if (!isNaN(flow)) {
-                                          results[matchedKey].mainMoneyIn = flow;
+                                          results[matchedKey].largeOrderNetYuan = flow;
+                                          results[matchedKey].largeOrderNetSource = "eastmoney-f62";
+                                          results[matchedKey].largeOrderNetAsOf = results[matchedKey].sourceAsOf;
                                       }
 
                                       // V17.5: Margin Data (T-1)
@@ -996,7 +997,7 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
   ];
   const BATCH_SIZE = 200;
   const MAX_PAGES = 20;
-  const PAGE_CONCURRENCY = 5;
+  const PAGE_CONCURRENCY = 3;
   const FIELDS = "f12,f14,f2,f3,f4,f5,f6,f8,f15,f16,f17,f18,f51,f52,f124";
 
   const fetchSegment = async (fs: string) => {
@@ -1007,9 +1008,9 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
       pagesRequested++;
       const url = `https://push2.eastmoney.com/api/qt/clist/get?pn=${page}&pz=${BATCH_SIZE}&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=${fs}&fields=${FIELDS}&_=${Date.now()}`;
 
-      for (let attempt = 0; attempt < 2; attempt++) {
+      for (let attempt = 0; attempt < 3; attempt++) {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6_000);
+        const timeoutId = setTimeout(() => controller.abort(), 10_000);
         try {
           const response = await fetch(url, {
             headers: {
@@ -1025,8 +1026,8 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
           pagesSucceeded++;
           return { ok: true, items, total: Number(json?.data?.total) || 0 };
         } catch (error) {
-          if (attempt === 1) return { ok: false, items: [], total: 0 };
-          await new Promise(resolve => setTimeout(resolve, 150));
+          if (attempt === 2) return { ok: false, items: [], total: 0 };
+          await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
         } finally {
           clearTimeout(timeoutId);
         }
@@ -1064,7 +1065,13 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
     return { items, expected, pagesRequested, pagesSucceeded, ok: items.length > 0 };
   };
 
-  const segmentResults = await Promise.all(segments.map(fetchSegment));
+  // Avoid a cold-start burst of 20+ requests from one edge IP, which causes
+  // Eastmoney to reject every segment. Segments run sequentially while pages
+  // retain bounded concurrency.
+  const segmentResults = [];
+  for (const segment of segments) {
+    segmentResults.push(await fetchSegment(segment));
+  }
   const segmentsSucceeded = segmentResults.filter(segment => segment.ok).length;
   const expectedRecords = segmentResults.reduce((sum, segment) => sum + segment.expected, 0);
   const fetchedRecords = segmentResults.reduce((sum, segment) => sum + segment.items.length, 0);
@@ -1093,7 +1100,7 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
     : now;
   const sourceAgeMs = Math.max(0, now - sourceTimestamp);
 
-  if (stocks.length < 4_000 || segmentsSucceeded < 4 || coverage < 0.85) {
+  if (stocks.length < 1_000 || segmentsSucceeded < 2) {
     throw new Error(
       `Market coverage insufficient: records=${stocks.length}, segments=${segmentsSucceeded}/${segments.length}, coverage=${coverage.toFixed(3)}`,
     );
@@ -1162,7 +1169,10 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
     }];
   });
 
-  const dataStatus: MarketDataStatus = coverage >= 0.97 && pagesSucceeded === pagesRequested
+  const dataStatus: MarketDataStatus = stocks.length >= 4_000 &&
+    segmentsSucceeded >= 4 &&
+    coverage >= 0.97 &&
+    pagesSucceeded === pagesRequested
     ? "FRESH"
     : "PARTIAL";
   const asOf = new Date().toISOString();
@@ -1628,8 +1638,10 @@ api.get("/market/history", async (c) => {
       // ═══════════════════════════════════════════════════════════
       // Strategy 1: Tencent (GTimg) - Preferred (Stable, HTTPS, Fast, Adjusted)
       try {
-          // Use Forward Adjusted (qfq) data for 300 days (sufficient for stock analysis)
-          const tencentUrl = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},day,,,300,qfq`;
+          // Request roughly 2.5 years so non-overlapping walk-forward evidence
+          // can reach the public HIGH threshold. Tencent currently caps this
+          // endpoint at about 640 adjusted daily bars.
+          const tencentUrl = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},day,,,640,qfq`;
           const controller = new AbortController();
           const id = setTimeout(() => controller.abort(), 8000); // 8s per stock
           
@@ -1663,7 +1675,7 @@ api.get("/market/history", async (c) => {
       }
       
       // Strategy 2: Sina (Fallback) - Note: Often blocks IPs
-      const url = `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${symbol}&scale=240&ma=no&datalen=300`;
+      const url = `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${symbol}&scale=240&ma=no&datalen=640`;
       
       try {
         const controller = new AbortController();

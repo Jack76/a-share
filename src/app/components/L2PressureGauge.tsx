@@ -105,7 +105,7 @@ export const L2PressureGauge: React.FC<Props> = ({ stock }) => {
         <div className="mt-4 grid grid-cols-2 gap-3">
             <div className="text-[9px] font-black text-slate-400 uppercase flex items-center gap-1.5">
                 <div className="w-1 h-1 rounded-full bg-red-500" /> 
-                资金诚意度: {stock.moneyQualityScore || 0}%
+                量价质量: {stock.moneyQualityScore?.toFixed(0) || '--'}
             </div>
             <div className="text-[9px] font-black text-slate-400 uppercase flex items-center gap-1.5 justify-end text-right">
                 流动性熵值: {stock.liquidityEntropy?.toFixed(1) || 0}
