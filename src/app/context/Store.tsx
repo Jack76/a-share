@@ -445,10 +445,29 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const needsMarketRecalibration = currentStocks.some(
       stock => stock.aiPrediction?.prediction?.marketDataStatus !== targetStatus,
     );
-    if (!needsMarketRecalibration) return;
+    const marketMap = new Map<string, Partial<Stock>>(
+      (marketStats.list || []).map((stock: Partial<Stock> & { code: string }) => [stock.code, stock]),
+    );
+    const needsFlowHydration = marketMap.size > 0 && currentStocks.some(stock => {
+      const marketStock = marketMap.get(stock.code.replace(/^(sh|sz|bj)/, ''));
+      return marketStock?.largeOrderNetYuan !== undefined &&
+        stock.largeOrderNetYuan !== marketStock.largeOrderNetYuan;
+    });
+    if (!needsMarketRecalibration && !needsFlowHydration) return;
+
+    const enrichedStocks = currentStocks.map(stock => {
+      const marketStock = marketMap.get(stock.code.replace(/^(sh|sz|bj)/, ''));
+      if (!marketStock) return stock;
+      return {
+        ...stock,
+        largeOrderNetYuan: marketStock.largeOrderNetYuan,
+        largeOrderNetSource: marketStock.largeOrderNetSource,
+        largeOrderNetAsOf: marketStock.largeOrderNetAsOf,
+      };
+    });
 
     const recalibratedStocks = recalculateStockScores(
-      currentStocks,
+      enrichedStocks,
       phaseRef.current,
       marketIndices,
       metricsRef.current.marketTemp,
@@ -474,6 +493,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     marketIndices,
     marketStats,
     marketThemes,
+    stocks,
   ]);
 
   useEffect(() => {
