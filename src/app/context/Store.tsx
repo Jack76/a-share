@@ -870,14 +870,25 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setMarketRefreshStatus('refreshing');
     setMarketRefreshError(null);
     try {
-        // The compact breadth summary stays on the 30s hot path. The 5400-row
-        // scanner snapshot refreshes independently every two minutes.
-        refreshMarketListInBackground();
-        const [{ data: indices }, marketStatsResult, realTimeThemes] = await Promise.all([
+        // Resolve the compact breadth summary before scoring stocks. Starting
+        // the full-list request at the same time creates two cold scans and can
+        // let predictions permanently capture UNAVAILABLE while the market UI
+        // recovers a few seconds later.
+        const [{ data: indices }, marketStatsSummary, realTimeThemes] = await Promise.all([
           fetchMarketIndices(),
           fetchMarketStats(false),
           fetchRealTimeThemes()
         ]);
+        let marketStatsResult = marketStatsSummary;
+        if (!isMarketStatsUsable(marketStatsResult)) {
+          const fullSnapshot = await fetchMarketStats(true);
+          if (isMarketStatsUsable(fullSnapshot)) {
+            marketStatsResult = fullSnapshot;
+            if (fullSnapshot.list && fullSnapshot.list.length >= 4_000) {
+              marketListRef.current = { list: fullSnapshot.list, fetchedAt: Date.now() };
+            }
+          }
+        }
         if (isMarketStatsUsable(marketStatsResult)) {
           lastGoodMarketStatsRef.current = { snapshot: marketStatsResult, receivedAt: Date.now() };
         }
@@ -1447,6 +1458,11 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             ),
             marketEvents: [...newEvents, ...(prev.marketEvents || [])].slice(0, 20)
           }));
+
+          // Only fetch the scanner-sized list after the summary has already
+          // calibrated this refresh. The edge cache then makes this request
+          // cheap, and it cannot race the prediction status.
+          refreshMarketListInBackground();
         }
     } catch (error) {
         console.error("Refresh failed", error);

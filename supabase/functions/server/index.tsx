@@ -1043,7 +1043,7 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
   const BATCH_SIZE = 100; // Upstream silently caps pages at 100 records.
   const MAX_PAGES = 65;
   const PAGE_CONCURRENCY = 4;
-  const FIELDS = "f12,f14,f2,f3,f4,f5,f6,f8,f15,f16,f17,f18,f51,f52,f124";
+  const FIELDS = "f12,f14,f2,f3,f4,f5,f6,f8,f15,f16,f17,f18,f51,f52,f62,f124";
   const EASTMONEY_HOSTS = ["push2.eastmoney.com", "push2delay.eastmoney.com"];
   let pagesRequested = 0;
   let pagesSucceeded = 0;
@@ -1152,6 +1152,15 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
     const amount = safeFloat(stock.f6);
     const turnoverRate = safeFloat(stock.f8);
     const previousClose = safeFloat(stock.f18);
+    const parsedLargeOrderNet = parseFloat(stock.f62);
+    const largeOrderNetYuan = Number.isFinite(parsedLargeOrderNet)
+      ? parsedLargeOrderNet
+      : undefined;
+    const stockSourceTimestamp = Number(stock.f124) * 1000;
+    const largeOrderNetAsOf = Number.isFinite(stockSourceTimestamp) &&
+      stockSourceTimestamp > 1_500_000_000_000
+      ? new Date(stockSourceTimestamp).toISOString()
+      : undefined;
     const limitState = calculateLimitState({
       code,
       name,
@@ -1177,6 +1186,9 @@ const buildMarketStatsSnapshot = async (): Promise<MarketStatsSnapshot> => {
       changePercent,
       amount,
       turnoverRate,
+      largeOrderNetYuan,
+      largeOrderNetSource: largeOrderNetYuan !== undefined ? "eastmoney-f62" : undefined,
+      largeOrderNetAsOf,
       isLimitUp: limitState.isLimitUp,
       isLimitDown: limitState.isLimitDown,
       limitUpPrice: limitState.limitUpPrice,
