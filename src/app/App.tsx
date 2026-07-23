@@ -20,12 +20,18 @@ import {
   PieChart,
   CircleCheck,
   CircleAlert,
+  Cloud,
+  CloudOff,
+  Database,
+  HardDrive,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Toaster } from './components/ui/sonner';
 import { Badge } from './components/ui/badge';
 import { cn } from './components/ui/utils';
 import { BlackSwanOverlay } from './components/BlackSwanOverlay';
+import { deriveMarketHealth } from './utils/dataHealth';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -44,7 +50,18 @@ export default function App() {
 }
 
 const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any) => {
-  const { connectionStatus, isSaving, phase, metrics } = useTrading();
+  const {
+    connectionStatus,
+    isSaving,
+    localSaveStatus,
+    phase,
+    metrics,
+    marketIndices,
+    refreshData,
+    marketRefreshStatus,
+    lastMarketRefreshAt,
+    marketRefreshError,
+  } = useTrading();
   
   const getMarketStatus = () => {
     const now = new Date();
@@ -96,13 +113,33 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
   ];
 
   const activeNavItem = navItems.find(item => item.id === activeTab) || navItems[0];
-  const connectionMeta = isSaving
-    ? { label: '保存中', detail: '正在保存本机策略数据', color: 'text-blue-600', dot: 'bg-blue-500', Icon: Loader, spinning: true }
+  const cloudMeta = isSaving
+    ? { label: '云端备份中', detail: '本机已保存，正在备份到云端', color: 'text-blue-600', dot: 'bg-blue-500', Icon: Loader, spinning: true }
     : connectionStatus === 'connected'
-      ? { label: '数据已同步', detail: '行情服务连接正常', color: 'text-green-600', dot: 'bg-green-500', Icon: CircleCheck, spinning: false }
+      ? { label: '云端已备份', detail: '本机数据已完成云端备份', color: 'text-green-600', dot: 'bg-green-500', Icon: Cloud, spinning: false }
       : connectionStatus === 'connecting'
-        ? { label: '数据连接中', detail: '正在连接行情服务', color: 'text-amber-600', dot: 'bg-amber-500', Icon: Loader, spinning: true }
-        : { label: '离线模式', detail: '行情暂不可用，已保留本机数据', color: 'text-red-600', dot: 'bg-red-500', Icon: CircleAlert, spinning: false };
+        ? { label: '云端连接中', detail: '本机数据可用，正在连接云端备份', color: 'text-amber-600', dot: 'bg-amber-500', Icon: Loader, spinning: true }
+        : { label: '仅本机保存', detail: '云端备份不可用，本机数据仍可正常使用', color: 'text-amber-700', dot: 'bg-amber-500', Icon: CloudOff, spinning: false };
+  const marketHealth = deriveMarketHealth({
+    refreshStatus: marketRefreshStatus,
+    indexCount: marketIndices.length,
+    breadthStatus: metrics.marketDataStatus,
+    coverage: metrics.marketDataCoverage,
+  });
+  const marketHealthStyle = {
+    green: { color: 'text-green-700', dot: 'bg-green-500', Icon: CircleCheck },
+    amber: { color: 'text-amber-700', dot: 'bg-amber-500', Icon: CircleAlert },
+    red: { color: 'text-red-700', dot: 'bg-red-500', Icon: CircleAlert },
+    blue: { color: 'text-blue-700', dot: 'bg-blue-500', Icon: Loader },
+  }[marketHealth.tone];
+  const refreshTimeLabel = lastMarketRefreshAt
+    ? new Date(lastMarketRefreshAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : '尚未成功更新';
+  const localSaveMeta = localSaveStatus === 'saving'
+    ? { label: '保存中', detail: '正在写入当前浏览器', color: 'text-blue-700', Icon: Loader, spinning: true }
+    : localSaveStatus === 'error'
+      ? { label: '保存失败', detail: '浏览器存储空间不足或不可用', color: 'text-red-700', Icon: CircleAlert, spinning: false }
+      : { label: '已保存', detail: '策略、自选与持仓保存在当前浏览器', color: 'text-green-700', Icon: HardDrive, spinning: false };
 
   const NavItem = ({ id, label, icon: Icon }: { id: string, label: string, icon: any }) => (
     <button
@@ -180,11 +217,11 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
         <div className="p-6 lg:p-8 mt-auto shrink-0 hidden lg:block">
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
             <div className="flex items-center gap-3 mb-2">
-                <div className={cn("w-2 h-2 rounded-full", connectionMeta.dot)} />
-                <span className={cn("text-[10px] font-black tracking-wider", connectionMeta.color)}>{connectionMeta.label}</span>
+                <div className={cn("w-2 h-2 rounded-full", cloudMeta.dot)} />
+                <span className={cn("text-[10px] font-black tracking-wider", cloudMeta.color)}>{cloudMeta.label}</span>
             </div>
             <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
-              {connectionMeta.detail}
+              {cloudMeta.detail}
             </p>
           </div>
         </div>
@@ -225,15 +262,76 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
                  {marketInfo.text}
              </div>
 
-            <div
-              className={cn("flex items-center gap-1.5 rounded-full border border-current bg-white px-2 py-1.5 text-[10px] font-bold", connectionMeta.color)}
-              role="status"
-              aria-live="polite"
-              title={connectionMeta.detail}
-            >
-              <connectionMeta.Icon className={cn("w-3.5 h-3.5", connectionMeta.spinning && "animate-spin")} />
-              <span className="hidden sm:inline">{connectionMeta.label}</span>
-            </div>
+            <details className="group relative">
+                <summary
+                  className={cn(
+                    "flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-current bg-white px-2 py-1.5 text-[10px] font-bold transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 [&::-webkit-details-marker]:hidden",
+                    marketHealthStyle.color,
+                  )}
+                  aria-label={`数据状态：${marketHealth.label}`}
+                  title={`${marketHealth.detail}，点击查看数据状态`}
+                >
+                  <marketHealthStyle.Icon className={cn("w-3.5 h-3.5", marketRefreshStatus === 'refreshing' && "animate-spin")} />
+                  <span className="hidden sm:inline">{marketHealth.label}</span>
+                </summary>
+              <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[min(22rem,calc(100vw-1.5rem))] rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl">
+                <div className="border-b border-slate-100 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-black text-slate-900">数据健康</div>
+                      <div className="mt-0.5 text-[10px] text-slate-400">各数据源独立显示，避免混淆</div>
+                    </div>
+                    <Badge variant="outline" className={cn("text-[9px] border-current", marketHealthStyle.color)}>
+                      {marketHealth.label}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="space-y-1 p-2">
+                  <div className="flex items-start gap-3 rounded-xl px-3 py-2.5">
+                    <localSaveMeta.Icon className={cn("mt-0.5 size-4", localSaveMeta.color, localSaveMeta.spinning && "animate-spin")} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-bold text-slate-800">本机保存</div>
+                      <div className="text-[10px] text-slate-500">{localSaveMeta.detail}</div>
+                    </div>
+                    <span className={cn("text-[10px] font-bold", localSaveMeta.color)}>{localSaveMeta.label}</span>
+                  </div>
+                  <div className="flex items-start gap-3 rounded-xl px-3 py-2.5">
+                    <cloudMeta.Icon className={cn("mt-0.5 size-4", cloudMeta.color, cloudMeta.spinning && "animate-spin")} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-bold text-slate-800">云端备份</div>
+                      <div className="text-[10px] text-slate-500">{cloudMeta.detail}</div>
+                    </div>
+                    <span className={cn("text-[10px] font-bold", cloudMeta.color)}>{cloudMeta.label.replace('云端', '')}</span>
+                  </div>
+                  <div className="flex items-start gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                    <Database className={cn("mt-0.5 size-4", marketHealthStyle.color)} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-bold text-slate-800">行情数据</div>
+                      <div className="text-[10px] text-slate-500">{marketHealth.detail}</div>
+                      <div className="mt-1 text-[9px] text-slate-400">
+                        最近更新：{refreshTimeLabel}
+                        {typeof metrics.marketDataCoverage === 'number' && ` · 宽度覆盖 ${(metrics.marketDataCoverage * 100).toFixed(0)}%`}
+                      </div>
+                      {marketRefreshError && (
+                        <div className="mt-1 truncate text-[9px] text-red-600" title={marketRefreshError}>更新失败：{marketRefreshError}</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="border-t border-slate-100 p-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => refreshData()}
+                    disabled={marketRefreshStatus === 'refreshing'}
+                    className="h-8 w-full gap-1.5 text-xs"
+                  >
+                    <RefreshCw className={cn("size-3.5", marketRefreshStatus === 'refreshing' && "animate-spin")} />
+                    {marketRefreshStatus === 'refreshing' ? '正在获取行情' : '重新获取行情'}
+                  </Button>
+                </div>
+              </div>
+            </details>
             
             {/* User Profile */}
             <div className="hidden xl:flex items-center gap-3 pl-4 border-l border-slate-200">

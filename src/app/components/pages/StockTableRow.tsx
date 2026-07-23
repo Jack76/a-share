@@ -816,6 +816,7 @@ export const StockTableRow = React.memo(
               )}
               onClick={() => onToggleWatch(stock)}
               title={stock.tags?.includes('SelfSelect') ? "取消自选" : "加入自选"}
+              aria-label={`${stock.tags?.includes('SelfSelect') ? "取消自选" : "加入自选"} ${stock.name}`}
             >
               {stock.tags?.includes('SelfSelect') ? <Star className="h-3.5 w-3.5 fill-current" /> : <Star className="h-3.5 w-3.5" />}
             </Button>
@@ -824,6 +825,7 @@ export const StockTableRow = React.memo(
               size="icon"
               className="h-7 w-7 rounded-lg hover:bg-red-50 hover:text-red-600"
               onClick={() => onDiagnose(stock)}
+              aria-label={`诊断 ${stock.name}`}
             >
               <Stethoscope className="h-3.5 w-3.5" />
             </Button>
@@ -832,6 +834,7 @@ export const StockTableRow = React.memo(
               size="icon"
               className="h-7 w-7 rounded-lg hover:bg-red-50 hover:text-red-600 md:hidden"
               onClick={() => onEdit(stock)}
+              aria-label={`编辑 ${stock.name}`}
             >
               <SquarePen className="h-3.5 w-3.5" />
             </Button>
@@ -840,6 +843,7 @@ export const StockTableRow = React.memo(
               size="icon"
               className="h-7 w-7 rounded-lg hover:bg-red-50 hover:text-red-600 hidden md:inline-flex"
               onClick={() => onEdit(stock)}
+              aria-label={`编辑 ${stock.name}`}
             >
               <SquarePen className="h-3.5 w-3.5" />
             </Button>
@@ -848,6 +852,7 @@ export const StockTableRow = React.memo(
               size="icon"
               className="h-7 w-7 rounded-lg hover:bg-red-50 hover:text-red-600 hidden md:inline-flex"
               onClick={() => onRemove(stock.id)}
+              aria-label={`删除 ${stock.name}`}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>

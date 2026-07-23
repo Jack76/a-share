@@ -52,6 +52,7 @@ import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { calculateRealtimeMetrics } from "../utils/realtimeAnalysis";
 import { detectBlackSwan, shouldOverrideSignal } from "../utils/blackSwanDetector";
 import { calculateThemeBreadthConsensus, normalizeMarketConcept } from '../utils/marketConcepts';
+import type { MarketRefreshStatus } from '../utils/dataHealth';
 
 interface TradingState {
   stocks?: Stock[];
@@ -115,6 +116,10 @@ interface TradingContextType {
   isMarketOpen: boolean;
   connectionStatus: 'connected' | 'disconnected' | 'connecting';
   isSaving: boolean;
+  localSaveStatus: 'saved' | 'saving' | 'error';
+  marketRefreshStatus: MarketRefreshStatus;
+  lastMarketRefreshAt: number | null;
+  marketRefreshError: string | null;
   forceRefreshHistory: () => void;
   eventDrivenMode: EventDrivenDetection | null; // V64.0
   analyzeLiveStockSignal: (
@@ -205,6 +210,10 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [isMarketOpen, setIsMarketOpen] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('connecting');
   const [isSaving, setIsSaving] = useState(false);
+  const [localSaveStatus, setLocalSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [marketRefreshStatus, setMarketRefreshStatus] = useState<MarketRefreshStatus>('idle');
+  const [lastMarketRefreshAt, setLastMarketRefreshAt] = useState<number | null>(null);
+  const [marketRefreshError, setMarketRefreshError] = useState<string | null>(null);
   const [eventDrivenMode, setEventDrivenMode] = useState<EventDrivenDetection | null>(null); // V64.0
 
   const stocksRef = useRef(stocks);
@@ -472,6 +481,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const saveData = async (partialData: Partial<TradingState>, immediate = false) => {
     setIsSaving(true);
+    setLocalSaveStatus('saving');
     try {
         // Optimization: Create a lightweight version for persistence
         // Strip 'history' from stocks to prevent payload bloat and broken pipes
@@ -510,18 +520,24 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             });
         }
 
-        const saved = localStorage.getItem('trading-system-v1');
-        const currentData = saved ? JSON.parse(saved) : {};
-        const newData = { ...currentData, ...payload };
+        let localSaved = false;
         try {
+            const saved = localStorage.getItem('trading-system-v1');
+            const currentData = saved ? JSON.parse(saved) : {};
+            const newData = { ...currentData, ...payload };
             localStorage.setItem('trading-system-v1', JSON.stringify(newData));
+            localSaved = true;
         } catch (lsErr) {
-            console.warn('localStorage quota exceeded, clearing old data...', lsErr);
+            console.warn('Local save failed, retrying with compact payload...', lsErr);
             try {
                 localStorage.removeItem('trading-system-v1');
                 localStorage.setItem('trading-system-v1', JSON.stringify(payload));
-            } catch (e) { /* ignore */ }
+                localSaved = true;
+            } catch (retryError) {
+                console.error('Local save retry failed', retryError);
+            }
         }
+        setLocalSaveStatus(localSaved ? 'saved' : 'error');
         
         // Accumulate changes for network debounce
         pendingSavePayload.current = { ...pendingSavePayload.current, ...payload };
@@ -615,6 +631,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
     } catch (e) {
       console.error('Save data error:', e);
+      setLocalSaveStatus('error');
       setConnectionStatus('disconnected');
       setIsSaving(false);
     }
@@ -786,7 +803,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (data.metrics) setMetrics(data.metrics);
       if (data.journal) setJournal(data.journal);
       if (data.phaseHistory) setPhaseHistory(data.phaseHistory);
-      setConnectionStatus('connected');
+      setConnectionStatus(cloudLoaded ? 'connected' : 'disconnected');
     } catch (e) {
       setConnectionStatus('disconnected');
     }
@@ -846,6 +863,8 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const refreshData = async () => {
     if (isRefreshing.current) return;
     isRefreshing.current = true;
+    setMarketRefreshStatus('refreshing');
+    setMarketRefreshError(null);
     try {
         // The compact breadth summary stays on the 30s hot path. The 5400-row
         // scanner snapshot refreshes independently every two minutes.
@@ -971,6 +990,8 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           marketDataCoverage,
           marketDataAgeMs: marketStats?.quality?.sourceAgeMs,
         }));
+        setLastMarketRefreshAt(Date.now());
+        setMarketRefreshStatus('success');
 
         const currentStocks = stocksRef.current;
         if (currentStocks.length > 0) {
@@ -1425,6 +1446,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
     } catch (error) {
         console.error("Refresh failed", error);
+        const message = error instanceof Error ? error.message : '行情服务暂时不可用';
+        setMarketRefreshError(message);
+        setMarketRefreshStatus('error');
         setMetrics(prev => ({ ...prev, marketDataStatus: 'UNAVAILABLE', marketDataCoverage: 0 }));
     } finally {
         isRefreshing.current = false;
@@ -1621,11 +1645,13 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const contextValue = useMemo(() => ({
     metrics, setMetrics, sentimentHistory, phase, phaseHistory, marketEvents, themes,
     addTheme, removeTheme, stocks, addStock, addStocks, updateStock, updateStocks, removeStock,
-    journal, setJournal, marketIndices, marketStats, marketThemes, indexTechnicals, refreshData, isMarketOpen, connectionStatus, isSaving,
+    journal, setJournal, marketIndices, marketStats, marketThemes, indexTechnicals, refreshData, isMarketOpen, connectionStatus, isSaving, localSaveStatus,
+    marketRefreshStatus, lastMarketRefreshAt, marketRefreshError,
     forceRefreshHistory, eventDrivenMode, analyzeLiveStockSignal
   }), [
     metrics, sentimentHistory, phase, phaseHistory, marketEvents, themes, stocks,
-    journal, marketIndices, marketStats, marketThemes, indexTechnicals, isMarketOpen, connectionStatus, isSaving, eventDrivenMode,
+    journal, marketIndices, marketStats, marketThemes, indexTechnicals, isMarketOpen, connectionStatus, isSaving, localSaveStatus,
+    marketRefreshStatus, lastMarketRefreshAt, marketRefreshError, eventDrivenMode,
     analyzeLiveStockSignal
   ]);
 
@@ -1667,6 +1693,10 @@ export const useTrading = () => {
       isMarketOpen: false,
       connectionStatus: 'connecting' as const,
       isSaving: false,
+      localSaveStatus: 'saved' as const,
+      marketRefreshStatus: 'idle' as const,
+      lastMarketRefreshAt: null,
+      marketRefreshError: null,
       forceRefreshHistory: () => {},
       eventDrivenMode: null,
       analyzeLiveStockSignal: (stock: Stock) => analyzeStockSignal(stock, 'Chaos'),

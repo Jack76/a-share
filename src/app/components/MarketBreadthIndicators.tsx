@@ -17,9 +17,14 @@ export const MarketBreadthIndicators: React.FC<Props> = ({ metrics, phase }) => 
   const isProfitPositive = yesterdayProfit > 0;
   const marketTemp = metrics.marketTemp || 50;
   const entropy = metrics.marketEntropy || 50; // Integrated from Chaos Meter
-  const marketDataUnavailable = !marketStats && metrics.marketDataStatus === 'UNAVAILABLE';
-  const displayedLimitUps = marketStats?.limitUpCount ?? (marketDataUnavailable ? null : metrics.limitUpCount);
-  const displayedLimitDowns = marketStats?.limitDownCount ?? (marketDataUnavailable ? null : metrics.limitDownCount);
+  const marketDataUnavailable = !marketStats && (
+    metrics.marketDataStatus === 'UNAVAILABLE' ||
+    metrics.marketDataStatus === undefined
+  );
+  const rawLimitUps = marketStats?.limitUpCount ?? (marketDataUnavailable ? null : metrics.limitUpCount);
+  const rawLimitDowns = marketStats?.limitDownCount ?? (marketDataUnavailable ? null : metrics.limitDownCount);
+  const displayedLimitUps = typeof rawLimitUps === 'number' && Number.isFinite(rawLimitUps) ? rawLimitUps : null;
+  const displayedLimitDowns = typeof rawLimitDowns === 'number' && Number.isFinite(rawLimitDowns) ? rawLimitDowns : null;
 
   // Debug: Log market stats to check limit down count
   React.useEffect(() => {

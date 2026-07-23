@@ -27,19 +27,6 @@ import {
   buildActualPortfolioCurve,
   type FundNavPoint,
 } from "../../utils/fundPortfolio";
-import {
-  AreaChart,
-  Area,
-  ResponsiveContainer,
-  YAxis,
-  XAxis,
-  PieChart as RePieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  Tooltip as ReTooltip,
-} from "recharts";
 import { Skeleton } from "../ui/skeleton";
 import {
   RefreshCw,
@@ -628,30 +615,37 @@ const generatePredatorStrategy = (fund: ExtendedFund, score: number): { signal: 
 
 // ===================== SUB-COMPONENTS =====================
 
-const MARGIN_ZERO = { top: 2, right: 0, bottom: 2, left: 0 };
-const Y_DOMAIN: [string, string] = ['dataMin', 'dataMax'];
+const PortfolioAllocationDonut = React.lazy(() => import("./FundCharts").then(module => ({ default: module.PortfolioAllocationDonut })));
+const PortfolioEquityChart = React.lazy(() => import("./FundCharts").then(module => ({ default: module.PortfolioEquityChart })));
+const FundComparisonChart = React.lazy(() => import("./FundCharts").then(module => ({ default: module.FundComparisonChart })));
 
 const MiniTrendChart = React.memo(({ data, isPositive, height = 48 }: { data: { date: string; value: number }[]; isPositive: boolean; height?: number }) => {
-  const id = useRef(`grad-${Math.random().toString(36).substr(2, 9)}`).current;
+  const id = React.useId().replace(/:/g, "");
   if (!data || data.length < 3) return null;
   const color = isPositive ? "#ef4444" : "#22c55e";
+  const values = data.map(point => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(max - min, 0.001);
+  const points = data.map((point, index) => {
+    const x = data.length === 1 ? 50 : (index / (data.length - 1)) * 100;
+    const y = 2 + ((max - point.value) / range) * (height - 4);
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  });
+  const areaPath = `M 0 ${height} L ${points.join(" L ")} L 100 ${height} Z`;
+  const linePath = `M ${points.join(" L ")}`;
   return (
-    <div style={{ height }} className="w-full relative">
-      {/* V67.4 FIX: Move gradient defs outside AreaChart to avoid null-key collision with Recharts internal defs */}
-      <svg width={0} height={0} className="absolute">
+    <div style={{ height }} className="w-full" aria-hidden="true">
+      <svg viewBox={`0 0 100 ${height}`} width="100%" height="100%" preserveAspectRatio="none">
         <defs>
           <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={color} stopOpacity={0.15} />
             <stop offset="95%" stopColor={color} stopOpacity={0} />
           </linearGradient>
         </defs>
+        <path d={areaPath} fill={`url(#${id})`} />
+        <path d={linePath} fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
       </svg>
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={MARGIN_ZERO}>
-          <YAxis key="y" domain={Y_DOMAIN} hide />
-          <Area key="area" type="monotone" dataKey="value" stroke={color} fill={`url(#${id})`} strokeWidth={1.5} isAnimationActive={false} />
-        </AreaChart>
-      </ResponsiveContainer>
     </div>
   );
 }, (p, n) => p.isPositive === n.isPositive && p.data?.length === n.data?.length && p.height === n.height);
@@ -672,13 +666,18 @@ const MarketStrip: React.FC<{ indices: IndexData[]; loading: boolean }> = React.
   );
   if (indices.length === 0) return null;
   return (
-    <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+    <div
+      className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1 pr-10 scrollbar-none"
+      role="region"
+      aria-label="主要指数，横向滚动查看更多"
+      tabIndex={0}
+    >
       {indices.map(idx => {
         const isUp = idx.changePercent > 0;
         const isDown = idx.changePercent < 0;
         return (
           <div key={idx.code} className={cn(
-            "flex items-center gap-2.5 px-3 py-2 rounded-lg border min-w-[150px] transition-colors",
+            "flex min-w-[142px] snap-start items-center gap-2 px-2.5 py-2 rounded-lg border transition-colors sm:min-w-[150px] sm:gap-2.5 sm:px-3",
             isUp ? "bg-red-50/60 border-red-100" : isDown ? "bg-green-50/60 border-green-100" : "bg-slate-50 border-slate-100"
           )}>
             <div className="text-xs font-bold text-slate-500 whitespace-nowrap">
@@ -835,13 +834,9 @@ const PortfolioSummary: React.FC<{
           <div className="flex items-center gap-2">
             {pieData.length > 0 ? (
               <div className="h-12 w-12 shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RePieChart>
-                    <Pie data={pieData} dataKey="value" cx="50%" cy="50%" outerRadius={22} innerRadius={10} strokeWidth={1}>
-                      {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-                    </Pie>
-                  </RePieChart>
-                </ResponsiveContainer>
+                <React.Suspense fallback={<Skeleton className="size-12 rounded-full" />}>
+                  <PortfolioAllocationDonut data={pieData} colors={PIE_COLORS} />
+                </React.Suspense>
               </div>
             ) : null}
             <div className="flex flex-col gap-0.5 overflow-hidden">
@@ -865,6 +860,7 @@ const PortfolioSummary: React.FC<{
           { key: "untagged", label: "未分类", count: holdings.filter(h => !h.tag).length },
         ].map(f => (
           <button key={f.key} onClick={() => onTagFilterChange(f.key === tagFilter ? "all" : f.key)}
+            aria-pressed={tagFilter === f.key}
             className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors",
               tagFilter === f.key ? "bg-slate-800 text-white border-slate-800" : "text-slate-400 border-slate-200 hover:text-slate-600"
             )}>
@@ -890,15 +886,19 @@ const PortfolioSummary: React.FC<{
                   { key: null, label: "标签", align: "text-center" },
                   { key: null, label: "操作", align: "text-right pr-4" },
                 ] as { key: HoldingSortKey | null; label: string; align: string }[]).map(col => (
-                  <th key={col.label}
-                    className={cn("p-3 select-none", col.align, col.key && "cursor-pointer hover:text-slate-600 transition-colors")}
-                    onClick={() => col.key && toggleHoldingSort(col.key)}>
-                    <span className="inline-flex items-center gap-0.5">
-                      {col.label}
-                      {col.key && holdingSort === col.key && (
-                        holdingSortAsc ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />
-                      )}
-                    </span>
+                  <th key={col.label} className={cn("p-3 select-none", col.align)}>
+                    {col.key ? (
+                      <button
+                        className="inline-flex items-center gap-0.5 transition-colors hover:text-slate-600"
+                        onClick={() => toggleHoldingSort(col.key!)}
+                        aria-label={`按${col.label}${holdingSort === col.key && holdingSortAsc ? "降序" : "升序"}排列`}
+                      >
+                        {col.label}
+                        {holdingSort === col.key && (
+                          holdingSortAsc ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />
+                        )}
+                      </button>
+                    ) : col.label}
                   </th>
                 ))}
               </tr>
@@ -952,18 +952,18 @@ const PortfolioSummary: React.FC<{
                     </td>
                     <td className="text-right p-3 pr-4">
                       <div className="flex justify-end gap-0.5" onClick={e => e.stopPropagation()}>
-                        <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 hover:text-red-500" title="加仓" onClick={() => onAddTx(h, "buy")}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 hover:text-red-500" title="加仓" aria-label={`加仓 ${fund?.name || h.name || h.code}`} onClick={() => onAddTx(h, "buy")}>
                           <Plus className="w-3 h-3" />
                         </Button>
                         {h.shares > 0 && (
-                          <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 hover:text-green-500" title="减仓" onClick={() => onAddTx(h, "sell")}>
+                          <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 hover:text-green-500" title="减仓" aria-label={`减仓 ${fund?.name || h.name || h.code}`} onClick={() => onAddTx(h, "sell")}>
                             <Minus className="w-3 h-3" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 hover:text-blue-500" title="交易记录" onClick={() => onViewTx(h)}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 hover:text-blue-500" title="交易记录" aria-label={`查看 ${fund?.name || h.name || h.code} 的交易记录`} onClick={() => onViewTx(h)}>
                           <History className="w-3 h-3" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 hover:text-red-500" title="删除" onClick={() => onRemove(h.id)}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-400 hover:text-red-500" title="删除" aria-label={`删除持仓 ${fund?.name || h.name || h.code}`} onClick={() => onRemove(h.id)}>
                           <Trash2 className="w-3 h-3" />
                         </Button>
                       </div>
@@ -988,6 +988,7 @@ const PortfolioSummary: React.FC<{
             { key: "name" as HoldingSortKey, label: "名称" },
           ]).map(s => (
             <button key={s.key} onClick={() => toggleHoldingSort(s.key)}
+              aria-pressed={holdingSort === s.key}
               className={cn("text-[9px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors",
                 holdingSort === s.key ? "bg-slate-800 text-white border-slate-800" : "text-slate-400 border-slate-200"
               )}>
@@ -1030,7 +1031,7 @@ const PortfolioSummary: React.FC<{
                   <Button variant="ghost" size="sm" className="h-6 text-[10px] text-red-500 px-2" onClick={() => onAddTx(h, "buy")}><Plus className="w-3 h-3 mr-0.5" />加仓</Button>
                   {h.shares > 0 && <Button variant="ghost" size="sm" className="h-6 text-[10px] text-green-500 px-2" onClick={() => onAddTx(h, "sell")}><Minus className="w-3 h-3 mr-0.5" />减仓</Button>}
                   <Button variant="ghost" size="sm" className="h-6 text-[10px] text-blue-500 px-2" onClick={() => onViewTx(h)}><History className="w-3 h-3 mr-0.5" />记录</Button>
-                  <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-300 hover:text-red-500" onClick={() => onRemove(h.id)}><Trash2 className="w-3 h-3" /></Button>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-300 hover:text-red-500" aria-label={`删除持仓 ${fund?.name || h.name || h.code}`} onClick={() => onRemove(h.id)}><Trash2 className="w-3 h-3" /></Button>
                 </div>
               </div>
             </Card>
@@ -1392,34 +1393,9 @@ const PortfolioEquityCurve: React.FC<{
           </span>
         </div>
         <div className="h-[160px] relative">
-          <svg width={0} height={0} className="absolute">
-            <defs>
-              <linearGradient id="portfolioGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={isPositive ? "#ef4444" : "#22c55e"} stopOpacity={0.12} />
-                <stop offset="95%" stopColor={isPositive ? "#ef4444" : "#22c55e"} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-          </svg>
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 16, left: 4 }}>
-              <YAxis key="y" tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fontSize: 9, fill: "#94a3b8" }} width={35} axisLine={false} tickLine={false} />
-              <XAxis key="x" dataKey="date" tick={{ fontSize: 8, fill: "#94a3b8" }} tickLine={false} axisLine={false}
-                tickFormatter={(d: string) => { if (!d) return ""; const p = d.split("-"); return p.length >= 3 ? `${parseInt(p[1])}/${parseInt(p[2])}` : d; }}
-                interval="preserveStartEnd" minTickGap={40}
-              />
-              <ReTooltip
-                contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px" }}
-                formatter={(val: number) => [`${val.toFixed(2)}%`, "组合收益"]}
-                labelFormatter={(label: any) => {
-                  if (!label && label !== 0) return "";
-                  const s = String(label);
-                  const p = s.split("-");
-                  return p.length >= 3 ? `${p[0]}年${parseInt(p[1])}月${parseInt(p[2])}日` : s;
-                }}
-              />
-              <Area key="area" type="monotone" dataKey="portfolio" stroke={isPositive ? "#ef4444" : "#22c55e"} fill="url(#portfolioGrad)" strokeWidth={2} isAnimationActive={false} />
-            </AreaChart>
-          </ResponsiveContainer>
+          <React.Suspense fallback={<Skeleton className="h-full w-full" />}>
+            <PortfolioEquityChart data={chartData} isPositive={isPositive} />
+          </React.Suspense>
         </div>
         <div className="text-[10px] text-slate-400 mt-1 text-center">按实际交易日期、份额与历史净值计算</div>
       </CardContent>
@@ -2171,22 +2147,9 @@ const CompareDialog: React.FC<{
             <Card className="bg-slate-50 border-slate-100 p-3">
               <div className="text-[10px] font-bold text-slate-400 mb-1">累计收益率 (%)</div>
               <div className="h-[200px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <XAxis key="x" dataKey="date" hide />
-                    <YAxis key="y" tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fontSize: 10 }} width={40} />
-                    <ReTooltip
-                      contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid #e2e8f0" }}
-                      formatter={(val: number, name: string) => {
-                        const idx = parseInt(name.replace("fund", ""));
-                        return [`${val.toFixed(2)}%`, funds[idx]?.name || name];
-                      }}
-                    />
-                    {funds.map((_, i) => (
-                      <Line key={`line-${i}`} type="monotone" dataKey={`fund${i}`} stroke={COMPARE_COLORS[i]} strokeWidth={2} dot={false} isAnimationActive={false} />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
+                <React.Suspense fallback={<Skeleton className="h-full w-full" />}>
+                  <FundComparisonChart data={chartData} fundNames={funds.map(fund => fund.name)} colors={COMPARE_COLORS} />
+                </React.Suspense>
               </div>
             </Card>
           )}
@@ -3436,6 +3399,7 @@ export const FundRadar: React.FC = () => {
   const { marketThemes = [] } = useTrading();
   const [funds, setFunds] = useState<ExtendedFund[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [customFunds, setCustomFunds] = useState<string[]>([]);
@@ -3545,6 +3509,7 @@ export const FundRadar: React.FC = () => {
   const [sortAsc, setSortAscRaw] = useState(() => localStorage.getItem("MAKE_FUND_ASC") === "1");
   const setSortAsc = useCallback((v: boolean) => { setSortAscRaw(v); localStorage.setItem("MAKE_FUND_ASC", v ? "1" : "0"); }, []);
   const [activeSection, setActiveSection] = useState<"radar" | "portfolio">("radar");
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   // V66.6: Multi-select signal filter (Set<string>, persisted)
   const [signalFilter, setSignalFilterRaw] = useState<Set<string>>(() => {
@@ -3600,6 +3565,7 @@ export const FundRadar: React.FC = () => {
   const loadFundData = async (forceRefresh = false) => {
     try {
       setLoading(true);
+      setLoadError(null);
       const [indicesRes] = await Promise.all([fetchMarketIndices()]);
 
       // V66.1: Extract index data
@@ -3702,9 +3668,19 @@ export const FundRadar: React.FC = () => {
         return { ...withBenchmark, score, signal, guidance };
       });
 
+      if (finalFunds.length === 0) {
+        throw new Error("未取得可用基金数据");
+      }
       setFunds(finalFunds.sort((a, b) => b.score - a.score));
       setLastRefresh(new Date().toLocaleTimeString());
-    } catch (e) { console.error("Fund loading failed", e); toast.error("基金数据加载失败"); } finally { setLoading(false); }
+    } catch (e) {
+      console.error("Fund loading failed", e);
+      const message = e instanceof Error ? e.message : "基金服务暂时不可用";
+      setLoadError(message);
+      toast.error(funds.length > 0 ? "基金刷新失败，继续显示上次数据" : "基金数据加载失败");
+    } finally {
+      setLoading(false);
+    }
   };
 
   // V67.1: Load a single fund incrementally without full page refresh
@@ -4000,6 +3976,7 @@ export const FundRadar: React.FC = () => {
 
   const handleSort = (key: SortKey) => { if (sortKey === key) setSortAsc(!sortAsc); else { setSortKey(key); setSortAsc(false); } };
   const SortIcon = ({ k }: { k: SortKey }) => sortKey !== k ? <ArrowUpDown className="w-3 h-3 text-slate-300" /> : sortAsc ? <ChevronUp className="w-3 h-3 text-red-500" /> : <ChevronDown className="w-3 h-3 text-red-500" />;
+  const initialLoading = loading && funds.length === 0;
 
   // ===================== RENDER =====================
 
@@ -4053,7 +4030,7 @@ export const FundRadar: React.FC = () => {
             )}
             {/* V67: Search suggestion dropdown */}
             {showSuggestions && searchSuggestions.length > 0 && (
-              <div className="absolute top-full left-0 mt-1 w-80 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
+              <div className="absolute top-full left-0 mt-1 w-full sm:w-80 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
                 <div className="px-3 py-1.5 text-[10px] text-slate-400 font-bold border-b border-slate-100 flex items-center justify-between">
                   <span>搜索结果 · 点击加入自选</span>
                   <span>{searchSuggestions.length} 只</span>
@@ -4093,11 +4070,36 @@ export const FundRadar: React.FC = () => {
       </div>
 
       {/* V66.1: Market Overview Strip */}
-      <MarketStrip indices={indices} loading={loading && indices.length === 0} />
+      <MarketStrip indices={indices} loading={initialLoading && indices.length === 0} />
+
+      {loadError && (
+        <div
+          className={cn(
+            "flex flex-col gap-3 rounded-xl border px-3 py-3 text-xs sm:flex-row sm:items-center sm:justify-between",
+            funds.length > 0 ? "border-amber-200 bg-amber-50 text-amber-900" : "border-red-200 bg-red-50 text-red-900",
+          )}
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="flex min-w-0 items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <div>
+              <div className="font-bold">{funds.length > 0 ? "本次刷新失败，当前显示上次数据" : "基金数据暂时无法加载"}</div>
+              <div className="mt-0.5 break-words text-[10px] opacity-75">{loadError}</div>
+            </div>
+          </div>
+          <Button variant="outline" size="sm" className="h-8 shrink-0 gap-1.5 bg-white" onClick={() => loadFundData(true)} disabled={loading}>
+            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+            重试
+          </Button>
+        </div>
+      )}
 
       {/* Section Tabs */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-2" role="tablist" aria-label="基金页面">
         <button onClick={() => setActiveSection("radar")}
+          role="tab"
+          aria-selected={activeSection === "radar"}
           className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-sm font-bold transition-colors",
             activeSection === "radar" ? "text-red-600 border-b-2 border-red-600 bg-red-50/50" : "text-slate-400 hover:text-slate-600"
           )}>
@@ -4105,6 +4107,8 @@ export const FundRadar: React.FC = () => {
           <Badge variant="secondary" className="text-[9px] h-4 px-1">{funds.length}</Badge>
         </button>
         <button onClick={() => setActiveSection("portfolio")}
+          role="tab"
+          aria-selected={activeSection === "portfolio"}
           className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-sm font-bold transition-colors",
             activeSection === "portfolio" ? "text-red-600 border-b-2 border-red-600 bg-red-50/50" : "text-slate-400 hover:text-slate-600"
           )}>
@@ -4117,11 +4121,11 @@ export const FundRadar: React.FC = () => {
           )}
         </button>
         <div className="hidden sm:block flex-1" />
-        <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setDcaDialogOpen(true)}>
-          <Calculator className="w-3 h-3" /> 定投模拟
+        <Button variant="outline" size="sm" className="h-7 w-7 gap-1 px-0 text-xs sm:w-auto sm:px-3" onClick={() => setDcaDialogOpen(true)} aria-label="定投模拟">
+          <Calculator className="w-3 h-3" /> <span className="hidden sm:inline">定投模拟</span>
         </Button>
-        <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => handleOpenAddHolding()}>
-          <Plus className="w-3 h-3" /> 添加持仓
+        <Button variant="outline" size="sm" className="h-7 w-7 gap-1 px-0 text-xs sm:w-auto sm:px-3" onClick={() => handleOpenAddHolding()} aria-label="添加持仓">
+          <Plus className="w-3 h-3" /> <span className="hidden sm:inline">添加持仓</span>
         </Button>
       </div>
 
@@ -4164,19 +4168,59 @@ export const FundRadar: React.FC = () => {
               ].map(c => (
                 <Button key={c.key} variant={selectedCategory === c.key ? "default" : "outline"} size="sm"
                   onClick={() => setSelectedCategory(c.key)}
+                  aria-pressed={selectedCategory === c.key}
                   className={cn("rounded-full h-7 text-xs px-3", selectedCategory === c.key && "bg-red-600 hover:bg-red-700")}>
                   {c.label}
                 </Button>
               ))}
             </div>
+            <div className="flex items-center justify-between gap-2 sm:hidden">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setMobileFiltersOpen(open => !open)}
+                className="h-8 flex-1 justify-between gap-2 px-3 text-xs"
+                aria-expanded={mobileFiltersOpen}
+                aria-controls="fund-advanced-filters"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Filter className="size-3.5" />
+                  筛选与排序
+                  {(selectedCategory !== "All" || isSignalFiltered) && (
+                    <Badge className="h-4 min-w-4 border-0 bg-red-600 px-1 text-[9px] text-white">
+                      {(selectedCategory !== "All" ? 1 : 0) + signalFilter.size}
+                    </Badge>
+                  )}
+                </span>
+                <ChevronDown className={cn("size-3.5 transition-transform", mobileFiltersOpen && "rotate-180")} />
+              </Button>
+              <div className="flex rounded-md border bg-white p-0.5">
+                <button
+                  onClick={() => setViewMode("grid")}
+                  className={cn("rounded p-1.5", viewMode === "grid" ? "bg-slate-100 text-slate-800" : "text-slate-400")}
+                  aria-label="卡片视图"
+                  aria-pressed={viewMode === "grid"}
+                ><LayoutGrid className="size-3.5" /></button>
+                <button
+                  onClick={() => setViewMode("list")}
+                  className={cn("rounded p-1.5", viewMode === "list" ? "bg-slate-100 text-slate-800" : "text-slate-400")}
+                  aria-label="列表视图"
+                  aria-pressed={viewMode === "list"}
+                ><List className="size-3.5" /></button>
+              </div>
+            </div>
             {/* Sector category tabs — scrollable horizontal */}
-            <div className="overflow-x-auto scrollbar-none pb-0.5">
+            <div
+              id="fund-advanced-filters"
+              className={cn("overflow-x-auto scrollbar-none pb-0.5", mobileFiltersOpen ? "block" : "hidden sm:block")}
+            >
               <div className="flex gap-1 whitespace-nowrap">
                 {FUND_CATEGORIES.map(c => {
                   const catCount = catCountMap.get(c.name) || 0;
                   return (
                     <button key={c.name}
                       onClick={() => setSelectedCategory(selectedCategory === c.name ? "All" : c.name)}
+                      aria-pressed={selectedCategory === c.name}
                       className={cn("px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors shrink-0",
                         selectedCategory === c.name
                           ? "bg-red-600 text-white border-red-600"
@@ -4194,10 +4238,11 @@ export const FundRadar: React.FC = () => {
               </div>
             </div>
             {/* Sort & View controls */}
-            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <div className={cn("items-center gap-2 shrink-0 flex-wrap", mobileFiltersOpen ? "flex" : "hidden sm:flex")}>
               <div className="flex items-center gap-1 bg-white border rounded-md p-0.5">
                 {([["score", "评分"], ["daily", "日涨幅"], ["quarter", "季度"], ["year", "年度"], ["signal", "信号"]] as [SortKey, string][]).map(([k, l]) => (
                   <button key={k} onClick={() => handleSort(k)}
+                    aria-pressed={sortKey === k}
                     className={cn("flex items-center gap-0.5 px-2 py-1 rounded text-[10px] font-bold transition-colors",
                       sortKey === k ? "bg-slate-100 text-slate-800" : "text-slate-400 hover:text-slate-600"
                     )}>
@@ -4205,7 +4250,7 @@ export const FundRadar: React.FC = () => {
                   </button>
                 ))}
               </div>
-              <div className="flex bg-white border rounded-md p-0.5">
+              <div className="hidden bg-white border rounded-md p-0.5 sm:flex">
                 <button
                   onClick={() => setViewMode("grid")}
                   className={cn("p-1.5 rounded transition-colors", viewMode === "grid" ? "bg-slate-100 text-slate-800" : "text-slate-400")}
@@ -4232,7 +4277,7 @@ export const FundRadar: React.FC = () => {
           </div>
 
           {/* V66.6: Signal Filter Bar (multi-select) */}
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className={cn("items-center gap-1.5 flex-wrap", mobileFiltersOpen ? "flex" : "hidden sm:flex")}>
             <Filter className={cn("w-3 h-3 transition-colors", isSignalFiltered ? "text-red-500" : "text-slate-400")} />
             {/* Tag-level quick filters */}
             {[
@@ -4243,6 +4288,7 @@ export const FundRadar: React.FC = () => {
             ].map(f => (
               <button key={f.key}
                 onClick={() => toggleSignalFilter(f.key)}
+                aria-pressed={signalFilter.has(f.key)}
                 className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full border transition-all",
                   signalFilter.has(f.key) ? f.activeStyle : "text-slate-400 border-slate-200 hover:text-slate-600"
                 )}>
@@ -4265,6 +4311,7 @@ export const FundRadar: React.FC = () => {
             ].filter(a => (signalCounts.actionCounts[a.action] || 0) > 0).map(a => (
               <button key={a.action}
                 onClick={() => toggleSignalFilter(a.action)}
+                aria-pressed={signalFilter.has(a.action)}
                 className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full border transition-all",
                   signalFilter.has(a.action) ? a.color : "text-slate-400 border-slate-100 hover:text-slate-600"
                 )}>
@@ -4293,27 +4340,29 @@ export const FundRadar: React.FC = () => {
               { tag: "Sleep", count: tagCounts.Sleep, color: "bg-slate-300", label: "Sleep" },
             ].filter(s => s.count > 0);
             return (
-              <div className="flex items-center gap-2">
+              <div className={cn("items-center gap-2", mobileFiltersOpen ? "flex" : "hidden sm:flex")}>
                 <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden flex">
                   {segments.map(s => (
-                    <div key={s.tag}
+                    <button key={s.tag}
                       className={cn("h-full transition-all cursor-pointer hover:opacity-80", s.color,
                         signalFilter.has(s.tag) && "ring-1 ring-offset-1 ring-slate-400"
                       )}
                       style={{ width: `${(s.count / total) * 100}%` }}
                       onClick={() => toggleSignalFilter(s.tag)}
+                      aria-label={`筛选 ${s.label}，${s.count}只`}
+                      aria-pressed={signalFilter.has(s.tag)}
                       title={`${s.label}: ${s.count}只 (${((s.count / total) * 100).toFixed(0)}%)`}
                     />
                   ))}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {segments.map(s => (
-                    <span key={s.tag} className={cn("text-[9px] flex items-center gap-0.5 cursor-pointer transition-colors",
+                    <button key={s.tag} className={cn("text-[9px] flex items-center gap-0.5 cursor-pointer transition-colors",
                       signalFilter.has(s.tag) ? "text-slate-700 font-bold" : "text-slate-400"
-                    )} onClick={() => toggleSignalFilter(s.tag)}>
+                    )} onClick={() => toggleSignalFilter(s.tag)} aria-pressed={signalFilter.has(s.tag)}>
                       <span className={cn("w-1.5 h-1.5 rounded-full", s.color)} />
                       {s.count}
-                    </span>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -4324,12 +4373,16 @@ export const FundRadar: React.FC = () => {
           <AnimatePresence>
             {compareMode && compareSet.size > 0 && (
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
-                className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200 px-4 py-2.5 flex items-center gap-3">
-                <div className="flex items-center gap-2">
+                className="fixed bottom-20 left-1/2 z-50 flex w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 items-center gap-3 overflow-x-auto rounded-xl border border-slate-200 bg-white/95 px-3 py-2.5 shadow-lg backdrop-blur-md lg:bottom-6 lg:w-auto lg:px-4">
+                <div className="flex shrink-0 items-center gap-2">
                   {compareFunds.map(f => (
                     <Badge key={f.code} variant="secondary" className="text-[10px] gap-1 pr-1">
                       {f.name.length > 4 ? f.name.slice(0, 4) + "…" : f.name}
-                      <button onClick={() => handleToggleCompare(f.code)} className="hover:text-red-500 ml-0.5"><X className="w-2.5 h-2.5" /></button>
+                      <button
+                        onClick={() => handleToggleCompare(f.code)}
+                        className="hover:text-red-500 ml-0.5"
+                        aria-label={`从对比中移除 ${f.name}`}
+                      ><X className="w-2.5 h-2.5" /></button>
                     </Badge>
                   ))}
                 </div>
@@ -4347,7 +4400,7 @@ export const FundRadar: React.FC = () => {
           </AnimatePresence>
 
           {/* Filter / Search result count */}
-          {(isSignalFiltered || searchQuery.trim()) && !loading && (
+          {(isSignalFiltered || searchQuery.trim()) && !initialLoading && (
             <div className="text-xs text-slate-400 font-medium flex items-center gap-1.5">
               {searchQuery.trim() && (
                 <>
@@ -4381,7 +4434,7 @@ export const FundRadar: React.FC = () => {
           {/* Grid */}
           {viewMode === "grid" && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {loading ? Array.from({ length: 8 }).map((_, i) => <FundCardSkeleton key={i} />) : (
+              {initialLoading ? Array.from({ length: 8 }).map((_, i) => <FundCardSkeleton key={i} />) : (
                 <AnimatePresence mode="popLayout">
                   {sortedFunds.map(fund => (
                     <motion.div key={fund.code} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} layout>
@@ -4398,19 +4451,19 @@ export const FundRadar: React.FC = () => {
 
           {/* List */}
           {viewMode === "list" && (
-            loading ? <FundListSkeleton /> : (
+            initialLoading ? <FundListSkeleton /> : (
             <Card className="bg-white overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                       <th className="text-left p-3 pl-4">基金</th>
-                      <th className="text-right p-3 cursor-pointer select-none" onClick={() => handleSort("daily")}><span className="inline-flex items-center gap-0.5">日涨幅 <SortIcon k="daily" /></span></th>
+                      <th className="text-right p-3"><button className="inline-flex items-center gap-0.5" onClick={() => handleSort("daily")} aria-label="按日涨幅排序">日涨幅 <SortIcon k="daily" /></button></th>
                       <th className="text-right p-3">净值</th>
-                      <th className="text-right p-3 cursor-pointer select-none" onClick={() => handleSort("quarter")}><span className="inline-flex items-center gap-0.5">近3月 <SortIcon k="quarter" /></span></th>
-                      <th className="text-right p-3 cursor-pointer select-none" onClick={() => handleSort("year")}><span className="inline-flex items-center gap-0.5">近1年 <SortIcon k="year" /></span></th>
-                      <th className="text-right p-3 cursor-pointer select-none" onClick={() => handleSort("score")}><span className="inline-flex items-center gap-0.5">评分 <SortIcon k="score" /></span></th>
-                      <th className="text-center p-3 cursor-pointer select-none" onClick={() => handleSort("signal")}><span className="inline-flex items-center gap-0.5">信号 <SortIcon k="signal" /></span></th>
+                      <th className="text-right p-3"><button className="inline-flex items-center gap-0.5" onClick={() => handleSort("quarter")} aria-label="按近3月收益排序">近3月 <SortIcon k="quarter" /></button></th>
+                      <th className="text-right p-3"><button className="inline-flex items-center gap-0.5" onClick={() => handleSort("year")} aria-label="按近1年收益排序">近1年 <SortIcon k="year" /></button></th>
+                      <th className="text-right p-3"><button className="inline-flex items-center gap-0.5" onClick={() => handleSort("score")} aria-label="按评分排序">评分 <SortIcon k="score" /></button></th>
+                      <th className="text-center p-3"><button className="inline-flex items-center gap-0.5" onClick={() => handleSort("signal")} aria-label="按信号排序">信号 <SortIcon k="signal" /></button></th>
                       <th className="text-right p-3 pr-4">操作</th>
                     </tr>
                   </thead>
@@ -4429,7 +4482,7 @@ export const FundRadar: React.FC = () => {
             )
           )}
 
-          {sortedFunds.length === 0 && !loading && (
+          {sortedFunds.length === 0 && !initialLoading && !loadError && (
             <div className="text-center py-20 text-slate-400">
               <Microscope className="w-12 h-12 mx-auto mb-4 opacity-20" />
               <p className="text-sm">暂无相关基金，请尝试切换分类或添加自选</p>

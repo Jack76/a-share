@@ -34,6 +34,38 @@ const LazyFallback = (
     </div>
 );
 
+const DeferredSection: React.FC<{
+    children: React.ReactNode;
+    minHeight?: number;
+}> = ({ children, minHeight = 320 }) => {
+    const ref = React.useRef<HTMLDivElement>(null);
+    const [visible, setVisible] = React.useState(false);
+
+    React.useEffect(() => {
+        if (visible) return;
+        if (typeof IntersectionObserver === 'undefined') {
+            setVisible(true);
+            return;
+        }
+        const observer = new IntersectionObserver(([entry]) => {
+            if (entry.isIntersecting) {
+                setVisible(true);
+                observer.disconnect();
+            }
+        }, { rootMargin: '600px 0px' });
+        if (ref.current) observer.observe(ref.current);
+        return () => observer.disconnect();
+    }, [visible]);
+
+    return (
+        <div ref={ref} style={!visible ? { minHeight } : undefined}>
+            {visible ? children : (
+                <div className="h-full min-h-40 animate-pulse rounded-[2rem] border border-slate-200 bg-white/50" aria-hidden="true" />
+            )}
+        </div>
+    );
+};
+
 // V64.0: Event Mode Config
 const EVENT_MODE_CONFIG = {
   GEO_EVENT:       { icon: '🔥', label: '地缘事件模式', color: 'from-orange-600 to-red-700', border: 'border-orange-500/30', text: 'text-orange-100' },
@@ -214,6 +246,7 @@ export const Dashboard: React.FC = () => {
                 </div>
 
                 {/* ZONE 3: SECTOR INTELLIGENCE (Resonance & Contagion) - PROMOTED */}
+                <DeferredSection minHeight={420}>
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 lg:gap-8">
                     {/* Resonance Monitor (2/3 Width) */}
                     <div className="xl:col-span-2 space-y-4">
@@ -241,8 +274,10 @@ export const Dashboard: React.FC = () => {
                         </div>
                     </div>
                 </div>
+                </DeferredSection>
 
                 {/* ZONE 4: TIME & EXECUTION (Stream & Report) */}
+                <DeferredSection minHeight={720}>
                 <div className="space-y-8">
                     {/* A. Auction Battle Engine + Position Dragon (New V63.0) */}
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 lg:gap-8">
@@ -267,8 +302,10 @@ export const Dashboard: React.FC = () => {
                         <QuantumBattleReport stocks={stocks} metrics={metrics} phase={phase} />
                     </div>
                 </div>
+                </DeferredSection>
 
                 {/* ZONE 5: DRAGON CORE (The List) */}
+                <DeferredSection minHeight={480}>
                 <div className="space-y-6">
                     <div className="flex items-center justify-between px-1">
                         <h3 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-3 uppercase italic">
@@ -281,8 +318,10 @@ export const Dashboard: React.FC = () => {
                         <DragonScanner />
                     </div>
                 </div>
+                </DeferredSection>
 
                 {/* ZONE 6: TACTICAL OPERATIONS (Profile & Holdings) - Adjusted to 2 cols */}
+                <DeferredSection minHeight={560}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* 1. Featured Stock Profile */}
                     {topDragon && (
@@ -344,6 +383,7 @@ export const Dashboard: React.FC = () => {
                         <StrategyPlanner />
                     </div>
                 </div>
+                </DeferredSection>
 
                 {/* ZONE 7: FOOTER INTELLIGENCE (Active Theme Tags) */}
                 <div className="border-t border-slate-200 pt-8">

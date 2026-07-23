@@ -191,10 +191,10 @@ const BearishAlert: React.FC<{
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => setExpanded(!expanded)} className="text-white/70 hover:text-white transition-colors p-1 rounded">
+              <button onClick={() => setExpanded(!expanded)} className="text-white/70 hover:text-white transition-colors p-1 rounded" aria-label={expanded ? "收起黑天鹅详情" : "展开黑天鹅详情"} aria-expanded={expanded}>
                 {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
-              <button onClick={onDismiss} className="text-white/50 hover:text-white transition-colors p-1 rounded" title={result.level === 3 ? "临时关闭 (60秒后自动恢复)" : "临时关闭"}>
+              <button onClick={onDismiss} className="text-white/50 hover:text-white transition-colors p-1 rounded" aria-label="临时关闭黑天鹅预警" title={result.level === 3 ? "临时关闭 (60秒后自动恢复)" : "临时关闭"}>
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -318,10 +318,10 @@ const EuphoriaAlert: React.FC<{
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => setExpanded(!expanded)} className="text-white/70 hover:text-white transition-colors p-1 rounded">
+              <button onClick={() => setExpanded(!expanded)} className="text-white/70 hover:text-white transition-colors p-1 rounded" aria-label={expanded ? "收起狂热预警详情" : "展开狂热预警详情"} aria-expanded={expanded}>
                 {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
-              <button onClick={onDismiss} className="text-white/50 hover:text-white transition-colors p-1 rounded" title={result.euphoriaLevel === 3 ? "临时关闭 (60秒后自动恢复)" : "临时关闭"}>
+              <button onClick={onDismiss} className="text-white/50 hover:text-white transition-colors p-1 rounded" aria-label="临时关闭狂热预警" title={result.euphoriaLevel === 3 ? "临时关闭 (60秒后自动恢复)" : "临时关闭"}>
                 <X className="w-4 h-4" />
               </button>
             </div>

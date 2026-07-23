@@ -1128,6 +1128,8 @@ export const DragonPool: React.FC = () => {
                             setFilterConcept('All');
                             setShowSelfSelectOnly(false);
                         }}
+                        aria-label="清除全部筛选条件"
+                        title="清除全部筛选"
                     >
                        <X className="w-4 h-4" />
                     </Button>
