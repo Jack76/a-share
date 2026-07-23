@@ -420,7 +420,7 @@ export const analyzeStockSignal = (
   
   // V58.0 Optimization: 量能否决 (Volume Veto)
   // 只有"放量"的反包才是真回马枪。缩量反包视为"死猫跳"(Dead Cat Bounce)，不予激活。
-  const isVolumeActive = effectiveTurnover > (turnoverMA5 * 0.8); // 至少达到均量线��80%
+  const isVolumeActive = effectiveTurnover > (turnoverMA5 * 0.8); // 至少达到均量线的 80%
   
   const isBoomerang =
     low < ma20 &&          // 曾跌破生命线(洗盘)
@@ -591,7 +591,7 @@ export const analyzeStockSignal = (
   let nextDayLow = current - atr;
   let prob = 60;
 
-  // V50.0: Calculate Closing Strength (��盘强弱)
+  // V50.0: Calculate Closing Strength (收盘强弱)
   // 0 = Closed at Low (Weak), 1 = Closed at High (Strong)
   // V59.6 FIX: Account for gap-up/gap-down — a stock that gaps up 5% then sells off
   // to barely green should NOT show high closingStrength just because (current-low)/(high-low) > 0.5.
@@ -653,7 +653,7 @@ export const analyzeStockSignal = (
     prob = 82;
     nextDayHigh = current * 1.08;
     nextDayLow = current * 1.01;
-    predictionDesc = "【加速预期】分歧转一致，弱转���确认。预期明早高开，缩量加速冲击涨停。";
+    predictionDesc = "【加速预期】分歧转一致，弱转强确认。预期明早高开，缩量加速冲击涨停。";
     intradayScript = "N-Wave"; // Standard acceleration
   } else if (isBoomerang) {
     // V50.1 Scenario: Boomerang (反包)
@@ -688,7 +688,7 @@ export const analyzeStockSignal = (
       prob += 15; // Confidence boost
       nextDayLow = current * 0.98; // Support is closer than thought
       nextDayHigh = current * 1.04;
-      predictionDesc = "【下���回升】主力暗中吸筹，明早惯性低开后将有强力承接，不仅不卖，反而是博弈低点。";
+      predictionDesc = "【下杀回升】主力暗中吸筹，明早惯性低开后将有强力承接，不仅不卖，反而是博弈低点。";
       intradayScript = "V-Reversal";
     }
     
@@ -1967,7 +1967,7 @@ export const analyzeStockSignal = (
           signalType = "WAIT";
           signalTitle = "空仓 (EMPTY)";
           adviceText = `[雪崩熔断] 指数重挫 ${(marketContext?.indexChange || 0).toFixed(2)}%，市场进入冰点普跌模式。系统强制熔断所有非龙头股的买入计划，现金为王。`;
-          score = 0; // 强制归��
+          score = 0; // 强制归零
           expectedDirection = "DOWN";
           intradayScript = "L-Crash";
       } else {
@@ -2157,7 +2157,7 @@ export const analyzeStockSignal = (
           t1Action = "早盘冲高不板止盈。";
       } else if (t1ClosePosition < 0.1 && t1BodyRatio > 0.04) {
           t1Opening = "低开 (-2% ~ -5%)";
-          t1Script = "���性杀跌";
+          t1Script = "惯性杀跌";
           t1Action = "反抽离场。";
       }
   }
@@ -2181,7 +2181,7 @@ export const analyzeStockSignal = (
   if ((signalType === "BUY" || isBullishHold) && isTrap) {
       // 记录原始信号标题（用于文案）
       const originalTitle = signalTitle;
-      // 触发仲裁：强���翻空
+      // 触发仲裁：强势翻空
       signalType = "SELL";
       signalTitle = "诱多 (TRAP)";
       

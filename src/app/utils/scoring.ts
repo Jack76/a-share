@@ -253,7 +253,7 @@ export const calculatePremiumExpectation = (stock: Stock, marketTemp: number): n
 
 /**
  * 计算背离指数 (Divergence Index)
- * 逻辑：指数涨��与市场情绪能量的差值。差值越大，说明市场处于“赚指数不赚钱”或“亏指数赚情绪”的背离状态。
+ * 逻辑：指数涨跌与市场情绪能量的差值。差值越大，说明市场处于“赚指数不赚钱”或“亏指数赚情绪”的背离状态。
  */
 export const calculateDivergenceIndex = (indexChange: number, sentimentScore: number): number => {
     // 归一化处理：通常指数 1% 波动对应 10 个单位情绪分
@@ -342,7 +342,7 @@ export const calculateLimitUpStrength = (stock: Stock): number => {
     // 早盘板 = 全天无抛压 = 明日溢价高
     // 尾盘板 = 资金偷袭/勉强回封 = 明日分歧大
     if (notes.includes('09:') || notes.includes('早盘')) score += 20; // 黄金时间
-    else if (notes.includes('10:') || notes.includes('11:')) score += 10; // 白银时间 ��银时间
+    else if (notes.includes('10:') || notes.includes('11:')) score += 10; // 白银时间
     else if (notes.includes('13:') || notes.includes('14:')) score -= 5; // 午后板，强度一般
     else if (notes.includes('尾盘')) score -= 15; // 尾盘偷袭，非奸即盗
     
@@ -396,7 +396,7 @@ export const detectInflection = (metrics: DailyMetrics, sentimentHistory: Sentim
     // 底部拐点检测 (冰点衰竭)：
     // 1. 市场温度处于极低区间 (< 35)
     // 2. 跌停数开始见顶回落
-    // 3. 情绪分出现底背离或勾头向上 出现“����背离”或“勾头向上”
+    // 3. 情绪分出现“底背离”或“勾头向上”
     if (metrics.marketTemp! < 35 && latest.score > prev.score && prev.score <= old.score) {
         if (metrics.limitDownCount < 15) return 'Bottom';
     }
@@ -538,7 +538,7 @@ export const analyzeThemes = (themes: Theme[], stocks: Stock[], marketThemes: Th
 /**
  * 计算市场熵值 (Market Entropy / Chaos Index) - v24.0
  * 逻辑：衡量市场波动的无序度。
- * 熵值高 = 混沌期，逻辑轮动极快，中位股极其���危险。
+ * 熵值高 = 混沌期，逻辑轮动极快，中位股极其危险。
  * 熵值低 = 秩序期，龙头效应明显，适合重仓核心。
  * 
  * 修正 (v6.1)：引入“多空撕裂度 (Polarization)”因子
@@ -629,7 +629,7 @@ export const calculateDragonSurvival = (leader: Stock, marketTemp: number, phase
     if (phase === 'Startup') probability += 20; // 启动期"龙抬头"
 
     // 5. 获利盘缓冲 (Profit Cushion) - v6.1
-    // 逻辑：如��标的近期涨幅巨大 (>35%)：
+    // 逻辑：如果标的近期涨幅巨大 (>35%)：
     // - 在主升期 (Climax/Startup) 代表人气极旺，是加分项
     // - 在退潮期 (Ebb/Ice) 代表获利盘兑现压力大是减分项
     const recentGain = (leader.currentPrice && leader.history && leader.history.length > 5) 
@@ -647,7 +647,7 @@ export const calculateDragonSurvival = (leader: Stock, marketTemp: number, phase
     if (leader.mainForceInflow && leader.turnoverAmount) {
         const flowRatio = leader.mainForceInflow / leader.turnoverAmount; // 净额 / 总成交
         
-        if (flowRatio > 0.15) probability += 15; // 净买入 > 15%，绝对���筹
+        if (flowRatio > 0.15) probability += 15; // 净买入 > 15%，绝对控筹
         else if (flowRatio > 0.05) probability += 8; // 净买入 > 5%，积极做多
         else if (flowRatio < -0.10) probability -= 15; // 净流出 > 10%，大举出货
         else if (flowRatio < -0.05) probability -= 5;
@@ -693,7 +693,7 @@ export const calculateDragonSurvival = (leader: Stock, marketTemp: number, phase
 
 /**
  * 计算 T+1 隔夜安全模型 (Overnight Safety Model) - v10.0
- * 预测���日开盘溢价与持仓安全性
+ * 预测次日开盘溢价与持仓安全性
  */
 export const calculateOvernightPotential = (stock: Stock, localMetrics: any, phase: string): {
     score: number,             // 综合评分 (0-100)
@@ -861,7 +861,7 @@ export const calculateOvernightPotential = (stock: Stock, localMetrics: any, pha
  * 战术决策矩阵 (War Room Matrix) - v41.2
  * 逻辑：由算法深计算，而非模拟。基于 (情绪周期 x 市场熵值 x 诱多风险 x 题材共振) 四维空间坐标。
  * v41.2 Update: 引入 TrapGuard 诱多阻断与 ThemeResonance 题材共振因子
- * 输出：决当前的战术方针、仓位上限及核心博弈��。
+ * 输出：决定当前的战术方针、仓位上限及核心博弈点。
  */
 export interface TacticalDecision {
     mode: 'Attack' | 'Defend' | 'Observe' | 'Retreat';
@@ -900,7 +900,7 @@ export const calculateTacticalMatrix = (
             riskThreshold -= 20; // 容忍风险
             tacticalFocus = '试错先锋/进攻龙头';
             break;
-        case 'Climax': // 高潮期：温度高，但��险也开始累积
+        case 'Climax': // 高潮期：温度高，但危险也开始累积
             mode = 'Observe'; // 盛极而衰，转为持仓观察
             positionLimit = 80; // 允许满仓持有，但不开新仓
             riskThreshold += 10; // 风险敏感度提高
@@ -988,7 +988,7 @@ export const calculateTacticalMatrix = (
 
 /**
  * 大面值/大亏损统计 (Big Loss / Facial Slap Counter) - v28.0
- * 逻辑：监测从涨幅 > 7% 回落至 < -2% 的标的数量，���是情绪退潮的最直接指标。
+ * 逻辑：监测从涨幅 > 7% 回落至 < -2% 的标的数量，这是情绪退潮的最直接指标。
  */
 export const calculateBigLossContagion = (stocks: Stock[]): { count: number, severity: 'Low' | 'Medium' | 'High' } => {
     const bigLosses = stocks.filter(s => {
@@ -1012,7 +1012,7 @@ export const calculateBigLossContagion = (stocks: Stock[]): { count: number, sev
 
 /**
  * 封板质量评分 (Limit Seal Quality) - v28.0
- * 因素：封板时间、炸板次数、封单额/流通盘比���
+ * 因素：封板时间、炸板次数、封单额/流通盘比
  */
 export const calculateSealQuality = (stock: Stock): number => {
     if (!stock.isLimitUp) return 0;
@@ -1064,7 +1064,7 @@ export const calculateCrowdedness = (themeName: string, stocks: Stock[]): number
 /**
  * 资金诚意评分 (Money Quality Score) - v29.0
  * 逻辑：基于分时量价关系、封单强度、以及相对于全场流动性的占比。
- * 真实��辑：不仅看涨幅，更看“有效成交”与“订单流压力”。
+ * 真实逻辑：不仅看涨幅，更看“有效成交”与“订单流压力”。
  */
 export const calculateMoneyQuality = (stock: Stock): number => {
     const change = stock.changePercent || 0;

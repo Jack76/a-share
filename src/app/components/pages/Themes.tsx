@@ -247,7 +247,14 @@ export const Themes: React.FC = () => {
                                        ) : '-'}
                                     </TableCell>
                                     <TableCell className="text-right">
-                                      <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => removeTheme(theme.id)}>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity"
+                                        onClick={() => removeTheme(theme.id)}
+                                        aria-label={`删除板块 ${theme.name}`}
+                                        title={`删除 ${theme.name}`}
+                                      >
                                         <Trash2 className="w-4 h-4 text-destructive" />
                                       </Button>
                                     </TableCell>

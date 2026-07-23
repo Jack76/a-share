@@ -615,7 +615,7 @@ const generatePredatorStrategy = (fund: ExtendedFund, score: number): { signal: 
     signal = { action: "加仓", color: "text-blue-600", desc: "温和回调，可加仓", tag: "Beta" };
     const volNote = volatility > 3 ? "（波动较大，分2-3笔买入）" : "";
     const trendNote = trend === "Bear" ? "（逆势需谨慎）" : "";
-    guidance = { title: isEtf ? "低吸加仓" : "定��加仓", action: "Buy", position: trend === "Bear" ? "加至 30%~40%" : "加至 40%~60%", reason: isEtf ? `回调 ${daily.toFixed(2)}%（阈值${addThreshold.toFixed(2)}%），RSI ${rsi.toFixed(0)} 中性偏低。${volNote}${trendNote}` : `净值回调 ${daily.toFixed(2)}%，Score ${score.toFixed(0)} 偏强，适合追加。${volNote}${trendNote}`, riskLevel: trend === "Bear" ? "Medium" : "Low" };
+    guidance = { title: isEtf ? "低吸加仓" : "定投加仓", action: "Buy", position: trend === "Bear" ? "加至 30%~40%" : "加至 40%~60%", reason: isEtf ? `回调 ${daily.toFixed(2)}%（阈值${addThreshold.toFixed(2)}%），RSI ${rsi.toFixed(0)} 中性偏低。${volNote}${trendNote}` : `净值回调 ${daily.toFixed(2)}%，Score ${score.toFixed(0)} 偏强，适合追加。${volNote}${trendNote}`, riskLevel: trend === "Bear" ? "Medium" : "Low" };
     return { signal, guidance };
   }
 
@@ -2355,7 +2355,7 @@ const FundCard: React.FC<{
         >
           {fund.category}
         </Badge>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
           {!isHeld && (
             <Button variant="ghost" size="sm" className="h-6 text-[10px] text-slate-400 hover:text-red-500 px-2" onClick={() => onAddHolding(fund.code, fund.name)}>
               <ShoppingCart className="w-3 h-3 mr-0.5" /> 建仓
@@ -2424,13 +2424,21 @@ const FundListRow: React.FC<{
         <div className="flex items-center justify-end gap-0.5">
           <button
             className={cn("h-6 w-6 flex items-center justify-center rounded transition-all",
-              isCustom ? "text-amber-500 hover:text-amber-600" : "text-slate-300 hover:text-amber-400 opacity-0 group-hover:opacity-100"
+              isCustom ? "text-amber-500 hover:text-amber-600" : "text-slate-400 hover:text-amber-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
             )}
             onClick={() => isCustom ? onRemoveCustom?.(fund.code) : onAddCustom?.(fund.code)}
-            title={isCustom ? "移除自选" : "加入自选"}>
+            title={isCustom ? "移除自选" : "加入自选"}
+            aria-label={isCustom ? `将 ${fund.name} 移出自选` : `将 ${fund.name} 加入自选`}>
             {isCustom ? <Star className="w-3.5 h-3.5 fill-current" /> : <Star className="w-3.5 h-3.5" />}
           </button>
-          <Button variant="ghost" size="sm" className="h-6 text-[10px] text-slate-400 hover:text-red-500 px-1.5 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => onAddHolding(fund.code, fund.name)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[10px] text-slate-400 hover:text-red-500 px-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity"
+            onClick={() => onAddHolding(fund.code, fund.name)}
+            aria-label={`将 ${fund.name} 加入持仓`}
+            title="加入持仓"
+          >
             <ShoppingCart className="w-3 h-3" />
           </Button>
         </div>
@@ -3420,7 +3428,7 @@ type ViewMode = "grid" | "list";
 /** Signal tag priority for sorting (higher = more aggressive) */
 const SIGNAL_TAG_WEIGHT: Record<string, number> = { Alpha: 4, Beta: 3, Danger: 2, Sleep: 1 };
 const SIGNAL_ACTION_WEIGHT: Record<string, number> = {
-  "主升浪": 90, "黄金坑": 80, "加���": 70, "持仓": 50,
+  "主升浪": 90, "黄金坑": 80, "加仓": 70, "持仓": 50,
   "减仓": 30, "止盈": 20, "警戒": 15, "止损": 10, "观望": 0,
 };
 
@@ -3996,25 +4004,25 @@ export const FundRadar: React.FC = () => {
   // ===================== RENDER =====================
 
   return (
-    <div className="space-y-5 p-4 md:p-6 lg:p-8 pb-20 max-w-7xl mx-auto">
+    <div className="space-y-5 p-3 sm:p-4 md:p-6 lg:p-8 pb-24 lg:pb-20 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <h2 className="text-2xl font-black tracking-tight flex items-center gap-2">
             <Target className="w-6 h-6 text-red-600" /> 基金雷达
             <Badge variant="outline" className="ml-2 border-red-200 text-red-600 bg-red-50 text-[10px]">V66.8</Badge>
           </h2>
-          <p className="text-slate-400 text-xs mt-1">
-            智能监控 · 持仓管理 · 标签分组 · 调仓建议 · 盈亏日历
-            {lastRefresh && <span className="ml-2 text-slate-300">请求于 {lastRefresh}</span>}
-            <span className="ml-2 text-slate-300">持仓仅保存在本机</span>
+          <p className="text-slate-500 text-xs mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>智能监控 · 持仓管理 · 标签分组 · 调仓建议 · 盈亏日历</span>
+            {lastRefresh && <span className="text-slate-400">请求于 {lastRefresh}</span>}
+            <span className="text-slate-400">持仓仅保存在本机</span>
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="relative" ref={searchBoxRef}>
+        <div className="flex w-full md:w-auto items-center gap-2 flex-wrap">
+          <div className="relative w-full sm:w-auto" ref={searchBoxRef}>
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none z-10" />
             {searchingApi && <Loader2 className="absolute right-8 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-300 animate-spin z-10" />}
-            <Input placeholder="搜索名称 / 代码添加自选" className="h-8 w-56 pl-8 pr-8 text-xs bg-white border shadow-sm rounded-lg focus-visible:ring-red-200"
+            <Input placeholder="搜索名称 / 代码添加自选" className="h-9 w-full sm:w-64 pl-8 pr-8 text-xs bg-white border shadow-sm rounded-lg focus-visible:ring-red-200"
               value={searchQuery} onChange={e => { setSearchQuery(e.target.value); if (!e.target.value.trim()) setShowSuggestions(false); }}
               onFocus={() => { if (searchSuggestions.length > 0) setShowSuggestions(true); }}
               onKeyDown={e => {
@@ -4035,7 +4043,11 @@ export const FundRadar: React.FC = () => {
                 }
               }} />
             {searchQuery && (
-              <button onClick={() => { setSearchQuery(""); setShowSuggestions(false); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 transition-colors z-10">
+              <button
+                onClick={() => { setSearchQuery(""); setShowSuggestions(false); }}
+                className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors z-10 rounded-md"
+                aria-label="清除搜索"
+              >
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
@@ -4084,7 +4096,7 @@ export const FundRadar: React.FC = () => {
       <MarketStrip indices={indices} loading={loading && indices.length === 0} />
 
       {/* Section Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-2">
         <button onClick={() => setActiveSection("radar")}
           className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-sm font-bold transition-colors",
             activeSection === "radar" ? "text-red-600 border-b-2 border-red-600 bg-red-50/50" : "text-slate-400 hover:text-slate-600"
@@ -4104,7 +4116,7 @@ export const FundRadar: React.FC = () => {
             </Badge>
           )}
         </button>
-        <div className="flex-1" />
+        <div className="hidden sm:block flex-1" />
         <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setDcaDialogOpen(true)}>
           <Calculator className="w-3 h-3" /> 定投模拟
         </Button>
@@ -4147,7 +4159,7 @@ export const FundRadar: React.FC = () => {
             <div className="flex items-center gap-1.5 flex-wrap">
               {[
                 { key: "All", label: "全部" },
-                { key: "自选", label: `��选(${customFunds.length})` },
+                { key: "自选", label: `自选(${customFunds.length})` },
                 { key: "持仓", label: `持仓(${holdings.length})` },
               ].map(c => (
                 <Button key={c.key} variant={selectedCategory === c.key ? "default" : "outline"} size="sm"
@@ -4170,7 +4182,7 @@ export const FundRadar: React.FC = () => {
                           ? "bg-red-600 text-white border-red-600"
                           : catCount > 0
                             ? "text-slate-600 border-slate-200 bg-white hover:text-slate-700 hover:border-slate-300"
-                            : "text-slate-300 border-slate-100 bg-slate-50"
+                            : "text-slate-400 border-slate-100 bg-slate-50"
                       )}>
                       {c.name}
                       {catCount > 0 && selectedCategory !== c.name && (
@@ -4194,10 +4206,23 @@ export const FundRadar: React.FC = () => {
                 ))}
               </div>
               <div className="flex bg-white border rounded-md p-0.5">
-                <button onClick={() => setViewMode("grid")} className={cn("p-1.5 rounded transition-colors", viewMode === "grid" ? "bg-slate-100 text-slate-800" : "text-slate-400")}><LayoutGrid className="w-3.5 h-3.5" /></button>
-                <button onClick={() => setViewMode("list")} className={cn("p-1.5 rounded transition-colors", viewMode === "list" ? "bg-slate-100 text-slate-800" : "text-slate-400")}><List className="w-3.5 h-3.5" /></button>
+                <button
+                  onClick={() => setViewMode("grid")}
+                  className={cn("p-1.5 rounded transition-colors", viewMode === "grid" ? "bg-slate-100 text-slate-800" : "text-slate-400")}
+                  aria-label="卡片视图"
+                  aria-pressed={viewMode === "grid"}
+                  title="卡片视图"
+                ><LayoutGrid className="w-3.5 h-3.5" /></button>
+                <button
+                  onClick={() => setViewMode("list")}
+                  className={cn("p-1.5 rounded transition-colors", viewMode === "list" ? "bg-slate-100 text-slate-800" : "text-slate-400")}
+                  aria-label="列表视图"
+                  aria-pressed={viewMode === "list"}
+                  title="列表视图"
+                ><List className="w-3.5 h-3.5" /></button>
               </div>
               <button onClick={() => { setCompareMode(!compareMode); if (compareMode) setCompareSet(new Set()); }}
+                aria-pressed={compareMode}
                 className={cn("flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[10px] font-bold border transition-colors",
                   compareMode ? "bg-blue-50 border-blue-300 text-blue-600" : "bg-white border-slate-200 text-slate-400 hover:text-slate-600"
                 )}>
@@ -4241,7 +4266,7 @@ export const FundRadar: React.FC = () => {
               <button key={a.action}
                 onClick={() => toggleSignalFilter(a.action)}
                 className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full border transition-all",
-                  signalFilter.has(a.action) ? a.color : "text-slate-300 border-slate-100 hover:text-slate-500"
+                  signalFilter.has(a.action) ? a.color : "text-slate-400 border-slate-100 hover:text-slate-600"
                 )}>
                 {a.action} <span className="opacity-60">{signalCounts.actionCounts[a.action]}</span>
               </button>

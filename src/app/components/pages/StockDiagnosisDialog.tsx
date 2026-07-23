@@ -539,7 +539,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
 
   // V51.0: STRONG CONTROL EXEMPTION (强庄控盘豁免)
   // 针对"历史换手率一直很低"的强庄股。
-  // 针对“历史换手���一直很低”的强庄股。
+  // 针对“历史换手率一直很低”的强庄股。
   // 特征：换手极低(<3%) + 趋势向上。
   // 逻辑：此类股票主力筹码极度锁定，浮盈虽高(可能>30%)，但只要不爆量，就没有兑现风险。
   // 修正：大幅提高高危阈值，避免将“锁仓拉升”误判为“即将出货”。
@@ -1153,7 +1153,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                   color: "bg-red-950 from-black to-red-900 border-red-600 shadow-red-900/50",
                   textColor: "text-red-400 font-black animate-pulse",
                   icon: <UserMinus className="w-8 h-8 text-red-600 animate-ping" />,
-                  advice: `【态势】盘口显示上方支撑极强，但股价滞涨。\n【内幕】检测到"托单欺诈" (系数${decoyScore.toFixed(0)})${reason}。��力在下方挂巨额买单假装支撑，实则正在通过小单密集出货。\n【指令】千万别信下方的买单，立即离场！`
+                  advice: `【态势】盘口显示上方支撑极强，但股价滞涨。\n【内幕】检测到"托单欺诈" (系数${decoyScore.toFixed(0)})${reason}。主力在下方挂巨额买单假装支撑，实则正在通过小单密集出货。\n【指令】千万别信下方的买单，立即离场！`
               };
           }
       }

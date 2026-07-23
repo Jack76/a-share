@@ -86,7 +86,7 @@ export const PRESET_THEMES = [
   },
   {
     name: "先进封装/HBM",
-    transmissionSpeed: 'quarterly' as TransmissionSpeed,  // ��单驱动，1-2季度
+    transmissionSpeed: 'quarterly' as TransmissionSpeed,  // 订单驱动，1-2季度
     stocks: [
       { code: "sz002156", name: "通富微电", note: "先进封装核心，深度绑定AMD" },
       { code: "sh600584", name: "长电科技", note: "国内封测龙头，具备Chiplet量产能力" },
@@ -262,7 +262,7 @@ export const PRESET_THEMES = [
     name: "自主可控 (芯片/信创)",
     transmissionSpeed: 'quarterly' as TransmissionSpeed,  // 政策集采+替代加速
     stocks: [
-      { code: "sh688981", name: "中��国际", note: "晶圆代工国产化核心，先进制程突破" },
+      { code: "sh688981", name: "中芯国际", note: "晶圆代工国产化核心，先进制程突破" },
       { code: "sz000066", name: "中国长城", note: "飞腾CPU+自主可控老牌龙头" },
       { code: "sz002049", name: "紫光国微", note: "特种集成电路，国防信息化核心" },
       { code: "sh688041", name: "海光信息", note: "X86架构CPU，服务器芯片国产化" },

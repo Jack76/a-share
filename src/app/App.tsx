@@ -16,10 +16,10 @@ import {
   BookOpen, 
   Menu, 
   X, 
-  Cloud, 
-  CloudOff, 
   Loader,
-  PieChart
+  PieChart,
+  CircleCheck,
+  CircleAlert,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Toaster } from './components/ui/sonner';
@@ -52,15 +52,15 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
     const minute = now.getMinutes();
     const day = now.getDay();
     
-    if (day === 0 || day === 6) return { text: "Weekend", color: "text-slate-500" };
+    if (day === 0 || day === 6) return { text: "周末休市", color: "text-slate-500" };
     
     const time = hour * 100 + minute;
-    if (time >= 915 && time <= 1130) return { text: "Trading (AM)", color: "text-green-600 animate-pulse font-bold" };
-    if (time >= 1300 && time <= 1500) return { text: "Trading (PM)", color: "text-green-600 animate-pulse font-bold" };
-    if (time >= 900 && time < 915) return { text: "Pre-Market", color: "text-orange-500 font-bold" };
-    if (time > 1130 && time < 1300) return { text: "Lunch Break", color: "text-slate-500" };
+    if (time >= 915 && time <= 1130) return { text: "上午交易中", color: "text-green-600 font-bold" };
+    if (time >= 1300 && time <= 1500) return { text: "下午交易中", color: "text-green-600 font-bold" };
+    if (time >= 900 && time < 915) return { text: "集合竞价", color: "text-orange-500 font-bold" };
+    if (time > 1130 && time < 1300) return { text: "午间休市", color: "text-slate-500" };
     
-    return { text: "Closed", color: "text-slate-400" };
+    return { text: "已休市", color: "text-slate-500" };
   };
 
   const marketInfo = getMarketStatus();
@@ -87,20 +87,30 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
   };
 
   const navItems = [
-    { id: 'dashboard', label: '市场情绪监测', shortLabel: '监测', icon: LayoutDashboard },
-    { id: 'themes', label: '板块共振确认', shortLabel: '板块', icon: Target },
-    { id: 'pool', label: '龙头核心池', shortLabel: '龙头', icon: Flame },
-    { id: 'funds', label: '热门基金雷达', shortLabel: '基金', icon: PieChart },
-    { id: 'trading', label: '实战交易决策', shortLabel: '交易', icon: Calculator },
-    { id: 'review', label: '数据复盘归纳', shortLabel: '复盘', icon: BookOpen },
+    { id: 'dashboard', label: '市场情绪监测', shortLabel: '监测', mobileTitle: '市场监测', icon: LayoutDashboard },
+    { id: 'themes', label: '板块共振确认', shortLabel: '板块', mobileTitle: '板块共振', icon: Target },
+    { id: 'pool', label: '龙头核心池', shortLabel: '龙头', mobileTitle: '龙头池', icon: Flame },
+    { id: 'funds', label: '热门基金雷达', shortLabel: '基金', mobileTitle: '基金雷达', icon: PieChart },
+    { id: 'trading', label: '实战交易决策', shortLabel: '交易', mobileTitle: '交易决策', icon: Calculator },
+    { id: 'review', label: '数据复盘归纳', shortLabel: '复盘', mobileTitle: '复盘归纳', icon: BookOpen },
   ];
+
+  const activeNavItem = navItems.find(item => item.id === activeTab) || navItems[0];
+  const connectionMeta = isSaving
+    ? { label: '保存中', detail: '正在保存本机策略数据', color: 'text-blue-600', dot: 'bg-blue-500', Icon: Loader, spinning: true }
+    : connectionStatus === 'connected'
+      ? { label: '数据已同步', detail: '行情服务连接正常', color: 'text-green-600', dot: 'bg-green-500', Icon: CircleCheck, spinning: false }
+      : connectionStatus === 'connecting'
+        ? { label: '数据连接中', detail: '正在连接行情服务', color: 'text-amber-600', dot: 'bg-amber-500', Icon: Loader, spinning: true }
+        : { label: '离线模式', detail: '行情暂不可用，已保留本机数据', color: 'text-red-600', dot: 'bg-red-500', Icon: CircleAlert, spinning: false };
 
   const NavItem = ({ id, label, icon: Icon }: { id: string, label: string, icon: any }) => (
     <button
       onClick={() => { setActiveTab(id); setSidebarOpen(false); }}
+      aria-current={activeTab === id ? 'page' : undefined}
       className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-200 group ${
         activeTab === id 
-          ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/20 scale-[1.01]' 
+          ? 'bg-primary text-primary-foreground shadow-md shadow-primary/15'
           : 'hover:bg-muted text-muted-foreground hover:text-foreground'
       }`}
     >
@@ -116,6 +126,12 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
 
   return (
     <div className={`h-screen flex text-slate-900 font-sans overflow-hidden transition-colors duration-1000 ${phaseTheme} bg-slate-50`}>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-slate-950 focus:px-4 focus:py-2 focus:text-sm focus:font-bold focus:text-white"
+      >
+        跳到主要内容
+      </a>
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div 
@@ -138,8 +154,9 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
             <div className="text-[9px] lg:text-[10px] uppercase font-black text-slate-400 mt-1 tracking-widest opacity-70">交易引擎 V2.0</div>
           </div>
           <button 
-            className="ml-auto lg:hidden text-slate-400 hover:text-slate-900"
+            className="ml-auto lg:hidden text-slate-400 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 rounded-lg"
             onClick={() => setSidebarOpen(false)}
+            aria-label="关闭导航菜单"
           >
             <X className="w-5 h-5" />
           </button>
@@ -163,11 +180,11 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
         <div className="p-6 lg:p-8 mt-auto shrink-0 hidden lg:block">
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
             <div className="flex items-center gap-3 mb-2">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                <span className="text-[10px] font-black text-slate-900 uppercase tracking-wider">AI 核心已激活</span>
+                <div className={cn("w-2 h-2 rounded-full", connectionMeta.dot)} />
+                <span className={cn("text-[10px] font-black tracking-wider", connectionMeta.color)}>{connectionMeta.label}</span>
             </div>
             <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
-              系统已连接 Supabase Edge Function，实时分析全市场龙虎榜异动。
+              {connectionMeta.detail}
             </p>
           </div>
         </div>
@@ -175,15 +192,18 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 bg-slate-50 h-screen overflow-hidden pb-16 lg:pb-0">
-        <header className="h-14 lg:h-20 border-b border-slate-200/60 flex items-center justify-between px-4 lg:px-8 bg-white/70 backdrop-blur-xl sticky top-0 z-30 shadow-sm shadow-slate-200/20">
+        <header className="h-16 lg:h-20 border-b border-slate-200/80 flex items-center justify-between px-3 sm:px-4 lg:px-8 bg-white/95 sticky top-0 z-30 shadow-sm shadow-slate-200/20">
           <div className="flex items-center gap-3 lg:gap-4">
-            <button className="lg:hidden text-slate-900" onClick={() => setSidebarOpen(true)}>
+            <button
+              className="lg:hidden text-slate-900 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="打开导航菜单"
+            >
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex flex-col">
               <span className="text-[9px] lg:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-0.5 flex items-center gap-2">
-                <span className="hidden sm:inline">战术指挥中心</span>
-                <span className="sm:hidden">TAC</span>
+                <span>战术中心</span>
                 {metrics.divergenceIndex !== undefined && (
                   <Badge variant="outline" className={cn("text-[8px] h-3.5 px-1 font-mono border-none bg-slate-100", 
                     Math.abs(metrics.divergenceIndex) > 5 ? "text-red-600 bg-red-50" : "text-slate-500")}>
@@ -191,45 +211,33 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
                   </Badge>
                 )}
               </span>
-              <h2 className="text-sm lg:text-lg font-black text-slate-900 tracking-tight uppercase italic">
-                {activeTab === 'dashboard' && <span className="hidden sm:inline">市场情绪监测</span>}
-                {activeTab === 'dashboard' && <span className="sm:hidden">监测</span>}
-                {activeTab === 'themes' && <span className="hidden sm:inline">板块共振确认</span>}
-                {activeTab === 'themes' && <span className="sm:hidden">板块</span>}
-                {activeTab === 'pool' && <span className="hidden sm:inline">龙头核心池</span>}
-                {activeTab === 'pool' && <span className="sm:hidden">龙头</span>}
-                {activeTab === 'funds' && <span className="hidden sm:inline">热门基金雷达</span>}
-                {activeTab === 'funds' && <span className="sm:hidden">基金</span>}
-                {activeTab === 'trading' && <span className="hidden sm:inline">实战交易决策</span>}
-                {activeTab === 'trading' && <span className="sm:hidden">交易</span>}
-                {activeTab === 'review' && <span className="hidden sm:inline">数据复盘归纳</span>}
-                {activeTab === 'review' && <span className="sm:hidden">复盘</span>}
+              <h2 className="text-sm lg:text-lg font-black text-slate-900 tracking-tight">
+                <span className="hidden sm:inline">{activeNavItem.label}</span>
+                <span className="sm:hidden">{activeNavItem.mobileTitle}</span>
               </h2>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 lg:gap-6">
+          <div className="flex items-center gap-2 lg:gap-4">
             {/* Market Status */}
-             <div className={`hidden md:flex items-center text-xs border px-3 py-1 rounded-full ${marketInfo.color} border-current bg-white font-black uppercase tracking-tight`}>
+             <div className={`hidden md:flex items-center text-[10px] border px-2.5 py-1.5 rounded-full ${marketInfo.color} border-current bg-white font-bold`}>
                  <div className="w-2 h-2 rounded-full bg-current mr-2" />
                  {marketInfo.text}
              </div>
 
-            <div className="hidden xl:flex items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
-                {isSaving ? (
-                    <span className="flex items-center"><Loader className="w-3 h-3 mr-1 animate-spin"/> 保存中</span>
-                ) : connectionStatus === 'connected' ? (
-                    <span className="flex items-center text-green-600"><Cloud className="w-3 h-3 mr-1"/> 已同步</span>
-                ) : connectionStatus === 'connecting' ? (
-                    <span className="flex items-center text-yellow-600"><Loader className="w-3 h-3 mr-1 animate-spin"/> 连接中</span>
-                ) : (
-                    <span className="flex items-center text-red-600"><CloudOff className="w-3 h-3 mr-1"/> 离线</span>
-                )}
+            <div
+              className={cn("flex items-center gap-1.5 rounded-full border border-current bg-white px-2 py-1.5 text-[10px] font-bold", connectionMeta.color)}
+              role="status"
+              aria-live="polite"
+              title={connectionMeta.detail}
+            >
+              <connectionMeta.Icon className={cn("w-3.5 h-3.5", connectionMeta.spinning && "animate-spin")} />
+              <span className="hidden sm:inline">{connectionMeta.label}</span>
             </div>
             
             {/* User Profile */}
-            <div className="flex items-center gap-2 lg:gap-3 pl-3 lg:pl-6 border-l border-slate-200">
-                 <div className="text-right hidden xl:block">
+            <div className="hidden xl:flex items-center gap-3 pl-4 border-l border-slate-200">
+                 <div className="text-right">
                      <div className="text-xs font-black text-slate-900 uppercase tracking-widest">Quant-X 终端</div>
                      <div className="text-[10px] text-red-600 font-black uppercase tracking-tighter">战略账户</div>
                  </div>
@@ -245,7 +253,7 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto no-scrollbar">
+        <div id="main-content" className="flex-1 overflow-y-auto no-scrollbar" tabIndex={-1}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-64">
               <div className="animate-spin w-6 h-6 border-2 border-slate-300 border-t-red-600 rounded-full" />
@@ -265,17 +273,19 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
+                  aria-label={item.label}
+                  aria-current={isActive ? 'page' : undefined}
                   className={cn(
-                    "flex flex-col items-center justify-center gap-1 transition-all duration-200",
+                    "relative min-w-0 flex flex-col items-center justify-center gap-1 transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500",
                     isActive ? "text-red-600" : "text-slate-400"
                   )}
                 >
-                  <Icon className={cn("w-5 h-5", isActive && "animate-pulse")} />
+                  <Icon className="w-5 h-5" />
                   <span className="text-[9px] font-black uppercase tracking-wider">
                     {item.shortLabel}
                   </span>
                   {isActive && (
-                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600" />
+                    <div className="absolute bottom-0 left-1/4 right-1/4 h-0.5 rounded-full bg-red-600" />
                   )}
                 </button>
               );

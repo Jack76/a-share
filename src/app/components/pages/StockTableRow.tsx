@@ -342,7 +342,7 @@ export const StockTableRow = React.memo(
                 badgeText = "反弹 REB";
                 badgeClass = "bg-blue-500 text-white";
             } else if (trend === 'Top') {
-                // V59.2: 见顶信号兜底 — 防止未映射的 Top 信号显示���灰色
+                // V59.2: 见顶信号兜底 — 防止未映射的 Top 信号显示为灰色
                 badgeText = "见顶 TOP";
                 badgeClass = "bg-red-900 text-red-100 border border-red-600 animate-pulse font-black";
                 icon = <TrendingDown className="w-3 h-3 mr-1" />;
