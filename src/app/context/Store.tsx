@@ -175,13 +175,18 @@ const isMarketStatsUsable = (snapshot: MarketStatsSnapshot | null): snapshot is 
 
   const quality = snapshot.quality;
   if (!quality) return false;
-  const maxSourceAgeMs = isChinaMarketSession() ? 180_000 : 7 * 24 * 60 * 60 * 1000;
+  const duringSession = isChinaMarketSession();
+  const maxSourceAgeMs = duringSession ? 180_000 : 7 * 24 * 60 * 60 * 1000;
+  // A verified closing snapshot remains the correct market context after the
+  // bell. Expiring it after two minutes caused late stock updates to revert
+  // only a few rows back to UNAVAILABLE while the market was closed.
+  const maxSnapshotAgeMs = duringSession ? 120_000 : 12 * 60 * 60 * 1000;
   const sourceIsFreshEnough = !Number.isFinite(quality.sourceAgeMs) ||
     (quality.sourceAgeMs || 0) <= maxSourceAgeMs;
   return quality.status !== 'UNAVAILABLE' &&
     quality.coverage >= 0.75 &&
     quality.segmentsSucceeded >= 1 &&
-    getMarketStatsAge(snapshot) <= 120_000 &&
+    getMarketStatsAge(snapshot) <= maxSnapshotAgeMs &&
     sourceIsFreshEnough;
 };
 
