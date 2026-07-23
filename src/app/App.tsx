@@ -273,6 +273,7 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
+                  onMouseDown={event => event.preventDefault()}
                   aria-label={item.label}
                   aria-current={isActive ? 'page' : undefined}
                   className={cn(
