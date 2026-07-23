@@ -1,0 +1,290 @@
+import type { MarketPhase, Stock } from '../types';
+
+export type PredictionReliability = 'LOW' | 'MEDIUM' | 'HIGH';
+export type MarketRegime = 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
+
+export interface MarketCalibrationContext {
+  totalCount?: number;
+  upCount?: number;
+  downCount?: number;
+  limitUpCount?: number;
+  limitDownCount?: number;
+  indexChange?: number;
+  isIndexBull?: boolean;
+  isIndexStrong?: boolean;
+  phaseConfidence?: number;
+  dataStatus?: 'FRESH' | 'PARTIAL' | 'STALE' | 'UNAVAILABLE';
+  coverage?: number;
+  sourceAgeMs?: number;
+  isMarketOpen?: boolean;
+}
+
+interface BacktestEvidence {
+  sampleSize: number;
+  winRate: number;
+  profitFactor: number;
+  expectancy: number;
+}
+
+export interface PredictionCalibrationInput {
+  stock: Stock;
+  phase: MarketPhase;
+  rawProbability: number;
+  direction: 'UP' | 'DOWN' | 'SIDEWAYS';
+  signalType: 'BUY' | 'SELL' | 'WAIT' | 'HOLD';
+  trapDetected: boolean;
+  backtest?: BacktestEvidence;
+  marketContext?: MarketCalibrationContext;
+}
+
+export interface PredictionCalibrationResult {
+  probability: number;
+  rawProbability: number;
+  dataQuality: number;
+  reliability: PredictionReliability;
+  sampleSize: number;
+  marketRegime: MarketRegime;
+  marketDataQuality: number;
+  warnings: string[];
+}
+
+export interface ActionablePrediction {
+  probability?: number;
+  direction?: 'UP' | 'DOWN' | 'SIDEWAYS';
+  reliability?: PredictionReliability;
+}
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(Math.max(value, min), max);
+
+const isValidCount = (value: number | undefined) =>
+  Number.isFinite(value) && (value || 0) >= 0;
+
+const calculateMarketDataQuality = (context?: MarketCalibrationContext): number => {
+  if (!context) return 0;
+  if (context.dataStatus === 'UNAVAILABLE') return 0;
+
+  let quality = 0;
+  const directionalCount = (context.upCount || 0) + (context.downCount || 0);
+  const hasBreadth = isValidCount(context.upCount) &&
+    isValidCount(context.downCount) && directionalCount >= 100;
+  const hasTotal = isValidCount(context.totalCount) && (context.totalCount || 0) >= directionalCount;
+
+  if (hasBreadth && hasTotal) quality += 0.45;
+  else if (hasBreadth) quality += 0.3;
+
+  if (isValidCount(context.limitUpCount) && isValidCount(context.limitDownCount)) quality += 0.2;
+  if (Number.isFinite(context.indexChange)) quality += 0.15;
+  if (typeof context.isIndexBull === 'boolean' || typeof context.isIndexStrong === 'boolean') quality += 0.1;
+  if (Number.isFinite(context.phaseConfidence)) quality += 0.1;
+
+  if (Number.isFinite(context.coverage)) {
+    quality *= clamp((context.coverage || 0) / 0.97, 0, 1);
+  }
+  if (context.dataStatus === 'PARTIAL') quality *= 0.85;
+  if (context.dataStatus === 'STALE') quality *= 0.5;
+
+  if (Number.isFinite(context.sourceAgeMs)) {
+    const allowedAgeMs = context.isMarketOpen
+      ? 180_000
+      : 7 * 24 * 60 * 60 * 1000;
+    if ((context.sourceAgeMs || 0) > allowedAgeMs) quality *= 0.25;
+  }
+
+  return clamp(quality, 0, 1);
+};
+
+const classifyMarketRegime = (
+  context: MarketCalibrationContext | undefined,
+  marketDataQuality: number,
+): MarketRegime => {
+  if (!context || marketDataQuality < 0.55) return 'UNKNOWN';
+
+  const directionalCount = (context.upCount || 0) + (context.downCount || 0);
+  const breadth = directionalCount > 0 ? (context.upCount || 0) / directionalCount : 0.5;
+  const limitCount = (context.limitUpCount || 0) + (context.limitDownCount || 0);
+  const limitBalance = limitCount > 0 ? (context.limitUpCount || 0) / limitCount : 0.5;
+  const indexChange = context.indexChange || 0;
+  const indexBreadthDivergent = (indexChange >= 0.3 && breadth < 0.48) ||
+    (indexChange <= -0.3 && breadth > 0.52);
+
+  if (indexBreadthDivergent) return 'DIVERGENT';
+  if (breadth <= 0.38 || limitBalance <= 0.35 || (indexChange <= -1 && context.isIndexBull === false)) {
+    return 'RISK_OFF';
+  }
+  if (
+    breadth >= 0.62 && limitBalance >= 0.62 && indexChange >= 0 &&
+    (context.isIndexBull === true || context.isIndexStrong === true)
+  ) {
+    return 'RISK_ON';
+  }
+  return 'NEUTRAL';
+};
+
+export const isActionableBullishPrediction = (
+  prediction?: ActionablePrediction,
+  minimumProbability = 70,
+) => Boolean(
+  prediction &&
+  prediction.direction === 'UP' &&
+  (prediction.probability || 0) >= minimumProbability &&
+  prediction.reliability !== 'LOW'
+);
+
+const calculateDataQuality = (stock: Stock): number => {
+  const history = stock.history || [];
+  const historyScore = history.length >= 120 ? 1
+    : history.length >= 60 ? 0.85
+      : history.length >= 30 ? 0.65
+        : history.length >= 15 ? 0.4
+          : 0.2;
+
+  const completeBars = history.filter(bar =>
+    Number.isFinite(bar.open) && Number.isFinite(bar.high) &&
+    Number.isFinite(bar.low) && Number.isFinite(bar.close) &&
+    Number.isFinite(bar.volume) && (bar.volume || 0) > 0
+  ).length;
+  const barCompleteness = history.length > 0 ? completeBars / history.length : 0;
+
+  const technicalFields = [
+    stock.technicals?.ma5,
+    stock.technicals?.ma20,
+    stock.technicals?.atr,
+    stock.technicals?.avgVol5,
+  ];
+  const technicalScore = technicalFields.filter(value => Number.isFinite(value) && (value || 0) > 0).length / technicalFields.length;
+  const realtimeScore = stock.intradayIndicators || stock.realtimeMetrics ? 1 : 0.35;
+
+  return clamp(historyScore * 0.45 + barCompleteness * 0.25 + technicalScore * 0.2 + realtimeScore * 0.1, 0.2, 1);
+};
+
+/**
+ * Calibrates heuristic confidence toward 50% when evidence is weak. Historical
+ * win rate is Bayesian-smoothed and only used for long signals with >=10 trades.
+ */
+export const calibratePrediction = ({
+  stock,
+  phase,
+  rawProbability,
+  direction,
+  signalType,
+  trapDetected,
+  backtest,
+  marketContext,
+}: PredictionCalibrationInput): PredictionCalibrationResult => {
+  const warnings: string[] = [];
+  const dataQuality = calculateDataQuality(stock);
+  const marketDataQuality = calculateMarketDataQuality(marketContext);
+  const marketRegime = classifyMarketRegime(marketContext, marketDataQuality);
+  const raw = clamp(rawProbability, 5, 95);
+  let calibrated = 50 + (raw - 50) * dataQuality;
+  const sampleSize = backtest?.sampleSize || 0;
+
+  const canUseLongBacktest = direction === 'UP' && (signalType === 'BUY' || signalType === 'HOLD');
+  if (backtest && canUseLongBacktest && sampleSize >= 10) {
+    const priorSamples = 20;
+    const smoothedWinRate = (
+      backtest.winRate * sampleSize + 50 * priorSamples
+    ) / (sampleSize + priorSamples);
+    const evidenceWeight = Math.min(0.45, sampleSize / 100);
+    calibrated = calibrated * (1 - evidenceWeight) + smoothedWinRate * evidenceWeight;
+
+    if (backtest.expectancy <= 0 || backtest.profitFactor < 1) {
+      calibrated = Math.min(calibrated, 50);
+      warnings.push('同类历史交易未形成正期望，置信度已封顶。');
+    }
+  } else if (canUseLongBacktest) {
+    warnings.push('有效历史样本少于10笔，不使用样本胜率抬高置信度。');
+  }
+
+  const signalConflicts = (signalType === 'BUY' && direction !== 'UP') ||
+    (signalType === 'SELL' && direction === 'UP');
+  if (signalConflicts) {
+    calibrated = Math.min(calibrated, 50);
+    warnings.push('交易信号与方向预测冲突，已降级。');
+  }
+
+  if ((phase === 'Ebb' || phase === 'Ice') && direction === 'UP') {
+    calibrated = Math.min(calibrated, 58);
+    warnings.push('退潮或冰点阶段限制看涨置信度。');
+  }
+
+  if (marketContext) {
+    if (marketDataQuality < 0.55) {
+      const unavailable = marketContext.dataStatus === 'UNAVAILABLE';
+      calibrated = 50 + (calibrated - 50) * (unavailable ? 0.4 : 0.8);
+      warnings.push(unavailable
+        ? '全市场环境数据不可用，概率已强制向中性收缩。'
+        : '全市场环境数据不完整或已过期，概率已额外收缩。');
+    } else {
+      const directionalCount = (marketContext.upCount || 0) + (marketContext.downCount || 0);
+      const breadth = directionalCount > 0 ? (marketContext.upCount || 0) / directionalCount : 0.5;
+      const limitCount = (marketContext.limitUpCount || 0) + (marketContext.limitDownCount || 0);
+      const limitBalance = limitCount > 0 ? (marketContext.limitUpCount || 0) / limitCount : 0.5;
+      const directionSign = direction === 'UP' ? 1 : direction === 'DOWN' ? -1 : 0;
+      const breadthAdjustment = clamp((breadth - 0.5) * 20 * directionSign, -6, 6);
+      const limitAdjustment = clamp((limitBalance - 0.5) * 10 * directionSign, -2.5, 2.5);
+      const indexAdjustment = clamp((marketContext.indexChange || 0) * 1.5 * directionSign, -3, 3);
+      let regimeAdjustment = clamp(breadthAdjustment + limitAdjustment + indexAdjustment, -8, 6);
+      const hasPositiveBacktest = Boolean(
+        backtest && sampleSize >= 10 && backtest.expectancy > 0 && backtest.profitFactor >= 1,
+      );
+
+      // A friendly tape may confirm an edge, but cannot manufacture one without evidence.
+      if (regimeAdjustment > 0 && !hasPositiveBacktest) regimeAdjustment *= 0.5;
+      calibrated += regimeAdjustment;
+
+      if (marketRegime === 'RISK_OFF' && direction === 'UP') {
+        calibrated = Math.min(calibrated, 52);
+        warnings.push('全市场宽度与涨跌停结构偏弱，看涨置信度已封顶。');
+      } else if (marketRegime === 'RISK_ON' && direction === 'DOWN') {
+        calibrated = Math.min(calibrated, 58);
+        warnings.push('全市场风险偏好较强，看跌置信度已封顶。');
+      } else if (marketRegime === 'DIVERGENT') {
+        calibrated = 50 + (calibrated - 50) * 0.85;
+        if (direction === 'UP' && (marketContext.indexChange || 0) > 0) {
+          calibrated = Math.min(calibrated, 56);
+        }
+        warnings.push('指数与市场宽度背离，方向置信度已降级。');
+      }
+    }
+
+    const phaseConfidence = Number.isFinite(marketContext.phaseConfidence)
+      ? clamp(marketContext.phaseConfidence || 0, 0, 100)
+      : undefined;
+    if (phaseConfidence !== undefined && phaseConfidence < 60) {
+      const phaseWeight = 0.5 + phaseConfidence / 200;
+      calibrated = 50 + (calibrated - 50) * phaseWeight;
+      warnings.push('市场阶段判定置信度偏低，概率已向中性收缩。');
+    }
+  }
+
+  if (trapDetected) {
+    calibrated = Math.min(calibrated, direction === 'DOWN' ? 75 : 40);
+    if (direction !== 'DOWN') warnings.push('诱多检测与看涨预测冲突。');
+  }
+
+  if (dataQuality < 0.6) warnings.push('历史或实时数据不完整，概率已向50%收缩。');
+
+  let reliability: PredictionReliability = dataQuality >= 0.82 && sampleSize >= 30
+    ? 'HIGH'
+    : dataQuality >= 0.6 && (sampleSize >= 10 || direction !== 'UP')
+      ? 'MEDIUM'
+      : 'LOW';
+
+  if (marketContext && (marketDataQuality < 0.65 || (marketContext.phaseConfidence ?? 100) < 50)) {
+    if (marketDataQuality < 0.4) reliability = 'LOW';
+    else if (reliability === 'HIGH') reliability = 'MEDIUM';
+  }
+
+  return {
+    probability: Math.round(clamp(calibrated, 20, 85)),
+    rawProbability: Math.round(raw),
+    dataQuality: Math.round(dataQuality * 100),
+    reliability,
+    sampleSize,
+    marketRegime,
+    marketDataQuality: Math.round(marketDataQuality * 100),
+    warnings,
+  };
+};
