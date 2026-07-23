@@ -435,6 +435,47 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
     };
 
+  // Market breadth and stock histories complete on different async paths.
+  // Recalibrate once when the verified market status changes so a prediction
+  // created during the loading window cannot remain permanently UNAVAILABLE.
+  useEffect(() => {
+    if (!isMarketStatsUsable(marketStats)) return;
+    const targetStatus = marketStats.quality?.status || 'PARTIAL';
+    const currentStocks = stocksRef.current;
+    const needsMarketRecalibration = currentStocks.some(
+      stock => stock.aiPrediction?.prediction?.marketDataStatus !== targetStatus,
+    );
+    if (!needsMarketRecalibration) return;
+
+    const recalibratedStocks = recalculateStockScores(
+      currentStocks,
+      phaseRef.current,
+      marketIndices,
+      metricsRef.current.marketTemp,
+      marketThemes,
+      indexTechnicals,
+      {
+        totalCount: marketStats.totalCount,
+        upCount: marketStats.upCount,
+        downCount: marketStats.downCount,
+        limitUpCount: marketStats.limitUpCount,
+        limitDownCount: marketStats.limitDownCount,
+        dataStatus: targetStatus,
+        coverage: marketStats.quality?.coverage,
+        sourceAgeMs: marketStats.quality?.sourceAgeMs,
+        isMarketOpen,
+        phaseConfidence: metricsRef.current.phaseConfidence,
+      },
+    );
+    setStocks(recalibratedStocks);
+  }, [
+    indexTechnicals,
+    isMarketOpen,
+    marketIndices,
+    marketStats,
+    marketThemes,
+  ]);
+
   useEffect(() => {
     const checkTime = () => {
       const now = new Date();
@@ -1049,6 +1090,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     changePercent: update.changePercent,
                     turnover: update.amount, // Mapping f6 to turnover/amount
                     turnoverRate: update.turnoverRate, // Added: Real-time Turnover Rate
+                    largeOrderNetYuan: update.largeOrderNetYuan,
+                    largeOrderNetSource: update.largeOrderNetSource,
+                    largeOrderNetAsOf: update.largeOrderNetAsOf,
                     limitUpPrice: update.limitUpPrice,
                     limitDownPrice: update.limitDownPrice,
                     isLimitUp: Boolean(update.isLimitUp),
@@ -1091,6 +1135,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
               changePercent: s.changePercent,
               turnover: s.amount,
               turnoverRate: s.turnoverRate,
+              largeOrderNetYuan: s.largeOrderNetYuan,
+              largeOrderNetSource: s.largeOrderNetSource,
+              largeOrderNetAsOf: s.largeOrderNetAsOf,
               limitUpPrice: s.limitUpPrice,
               limitDownPrice: s.limitDownPrice,
               isLimitUp: Boolean(s.isLimitUp),

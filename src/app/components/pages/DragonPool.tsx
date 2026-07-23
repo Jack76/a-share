@@ -546,6 +546,9 @@ export const DragonPool: React.FC = () => {
             // Hunter V5.0 Real Data Mapping
             turnoverRate: stock.turnoverRate || 0, // Use Real Turnover Rate from API
             turnoverAmount: stock.amount || 0,
+            largeOrderNetYuan: stock.largeOrderNetYuan,
+            largeOrderNetSource: stock.largeOrderNetSource,
+            largeOrderNetAsOf: stock.largeOrderNetAsOf,
             trapRiskScore: 0, // Pending real risk model
             aiPrediction: {
                 trend: 'Neutral',
