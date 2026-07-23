@@ -1,15 +1,19 @@
 packages:
   - "."
 
-overrides:
-  vite: 6.3.5
-
-onlyBuiltDependencies:
-  - esbuild
-  - sharp
-  - workerd
-
 allowBuilds:
+  "@tailwindcss/oxide": true
   esbuild: true
   sharp: true
+  tesseract.js: true
   workerd: true
+
+onlyBuiltDependencies:
+  - "@tailwindcss/oxide"
+  - esbuild
+  - sharp
+  - tesseract.js
+  - workerd
+
+overrides:
+  vite: 6.3.5
