@@ -65,6 +65,8 @@ export interface PredictionWaitContext extends ActionablePrediction {
   sampleSize?: number;
 }
 
+export type PredictionSignalType = 'BUY' | 'SELL' | 'WAIT' | 'HOLD';
+
 export type PredictionWaitReason =
   | 'INSUFFICIENT_EVIDENCE'
   | 'DIRECTION_NOT_BULLISH'
@@ -73,7 +75,7 @@ export type PredictionWaitReason =
   | 'OTHER';
 
 export interface BuySignalGateInput {
-  signalType: 'BUY' | 'SELL' | 'WAIT' | 'HOLD';
+  signalType: PredictionSignalType;
   direction: 'UP' | 'DOWN' | 'SIDEWAYS';
   probability: number;
   trapDetected: boolean;
@@ -155,6 +157,21 @@ export const isActionableBullishPrediction = (
   prediction.direction === 'UP' &&
   (prediction.probability || 0) >= minimumProbability &&
   prediction.reliability !== 'LOW'
+);
+
+/**
+ * Weak evidence may veto a new entry, but it must never hide an existing
+ * SELL/HOLD position-management decision. Exit protection is intentionally
+ * asymmetric: missing evidence blocks risk-taking, not risk reduction.
+ */
+export const shouldApplyEntryWaitGate = (
+  signalType: PredictionSignalType | undefined,
+  prediction?: ActionablePrediction,
+  minimumProbability = 70,
+) => (
+  signalType !== 'SELL' &&
+  signalType !== 'HOLD' &&
+  !isActionableBullishPrediction(prediction, minimumProbability)
 );
 
 export const getPredictionWaitReason = (

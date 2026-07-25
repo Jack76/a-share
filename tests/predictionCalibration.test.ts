@@ -4,6 +4,7 @@ import {
   calibratePrediction,
   getPredictionWaitReason,
   isActionableBullishPrediction,
+  shouldApplyEntryWaitGate,
 } from '../src/app/utils/predictionCalibration.ts';
 
 const completeHistory = Array.from({ length: 120 }, (_, index) => ({
@@ -98,6 +99,15 @@ test('only reliable bullish predictions can strengthen a buy signal', () => {
   assert.equal(isActionableBullishPrediction({ probability: 78, direction: 'DOWN', reliability: 'HIGH' }), false);
   assert.equal(isActionableBullishPrediction({ probability: 78, direction: 'UP', reliability: 'LOW' }), false);
   assert.equal(isActionableBullishPrediction({ probability: 78, direction: 'UP', reliability: 'MEDIUM' }), true);
+});
+
+test('weak evidence blocks new entries without suppressing exit or hold decisions', () => {
+  const weakPrediction = { probability: 52, direction: 'SIDEWAYS' as const, reliability: 'LOW' as const };
+
+  assert.equal(shouldApplyEntryWaitGate('BUY', weakPrediction), true);
+  assert.equal(shouldApplyEntryWaitGate('WAIT', weakPrediction), true);
+  assert.equal(shouldApplyEntryWaitGate('SELL', weakPrediction), false);
+  assert.equal(shouldApplyEntryWaitGate('HOLD', weakPrediction), false);
 });
 
 test('wait reason distinguishes weak evidence from a non-bullish direction', () => {

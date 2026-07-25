@@ -12,7 +12,11 @@ import { calculateRealtimeMetrics, RealtimeMetrics } from '../../utils/realtimeA
 import { fetchStockTicks, fetchStockData } from '../../services/marketData';
 import { detectFundIdentity, predictSmashRisk } from '../../utils/fundIntelligence';
 import { calculateOvernightPotential, calculateLimitUpStrength } from '../../utils/scoring';
-import { getPredictionWaitReason, isActionableBullishPrediction } from '../../utils/predictionCalibration';
+import {
+  getPredictionWaitReason,
+  isActionableBullishPrediction,
+  shouldApplyEntryWaitGate,
+} from '../../utils/predictionCalibration';
 import { calculateLimitState } from '../../../shared/marketRules';
 import { useTrading } from '../../context/Store';
 import {
@@ -1437,7 +1441,27 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   let signal = getSignalVisuals();
   const diagnosisRiskSignal = ['出逃', '止损', '诱多', '埋人', '核按钮', '烂板', '炸板', '拉高出货', '离场', '撤退', '天量', '避险', '风险', '陷阱']
       .some(keyword => signal.title.includes(keyword));
-  if (!isActionableBullishPrediction(stock.aiPrediction?.prediction) && !diagnosisRiskSignal) {
+  const predictionSignalType = stock.aiPrediction?.signalType;
+  const isPositionManagementSignal = predictionSignalType === 'SELL' || predictionSignalType === 'HOLD';
+
+  // Explicit engine exits must remain visible even when bullish evidence is
+  // weak. Low-confidence data can veto a new BUY, but must not suppress a
+  // stop-loss, take-profit, reduction, or hold-with-stop decision.
+  if (predictionSignalType === 'SELL' && !diagnosisRiskSignal) {
+      signal = {
+          title: "卖出/减仓 (SELL)",
+          color: "bg-red-950 from-red-900 to-black border-red-700 shadow-red-900/50",
+          textColor: "text-red-300",
+          icon: <TrendingDown className="w-8 h-8 text-red-500 animate-pulse" />,
+          advice: `【态势】预测引擎已输出卖出信号，不再按买入置信门槛进行覆盖。\n【证据】${pred?.strategy || `方向为${pred?.prediction?.direction || 'DOWN'}，方向置信度${pred?.prediction?.probability || 50}%。`}\n【指令】${pred?.positionAdvice || `优先执行减仓或离场；参考卖出位${pred?.sellPoint || '按实时压力位'}。`}`
+      };
+  }
+
+  if (
+      shouldApplyEntryWaitGate(predictionSignalType, stock.aiPrediction?.prediction) &&
+      !diagnosisRiskSignal &&
+      !isPositionManagementSignal
+  ) {
       const prediction = stock.aiPrediction?.prediction;
       const waitReason = getPredictionWaitReason(prediction);
       const waitCopy = {
@@ -1514,6 +1538,34 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
 
   const buyPoint = stock.aiPrediction?.buyPoint || (current * 0.98).toFixed(2);
   const sellPoint = stock.aiPrediction?.sellPoint || (current * 1.05).toFixed(2);
+  const displaySellPoint = /^¥/.test(String(sellPoint))
+      ? String(sellPoint)
+      : /^\d+(\.\d+)?$/.test(String(sellPoint))
+          ? `¥${sellPoint}`
+          : String(sellPoint);
+  const exitTimingCopy = predictionSignalType === 'SELL'
+      ? {
+          label: '立即执行',
+          tone: 'text-red-600 bg-red-50 border-red-200',
+          instruction: stock.aiPrediction?.positionAdvice || '当前可交易时段优先减仓或离场，不等待买入证据恢复。'
+      }
+      : predictionSignalType === 'HOLD'
+          ? {
+              label: '持有设防',
+              tone: 'text-amber-700 bg-amber-50 border-amber-200',
+              instruction: stock.aiPrediction?.positionAdvice || '触及目标位分批止盈；跌破动态防守位执行退出。'
+          }
+          : predictionSignalType === 'BUY'
+              ? {
+                  label: '入场即设',
+                  tone: 'text-blue-700 bg-blue-50 border-blue-200',
+                  instruction: '买入后同步设置止盈与止损条件，任一条件先触发就先执行。'
+              }
+              : {
+                  label: '仅做风控',
+                  tone: 'text-slate-600 bg-slate-50 border-slate-200',
+                  instruction: '空仓继续观察；若已有持仓，止盈与止损条件仍然有效。'
+              };
   const hasDivergence = stock.trapSignals?.some(s => s.type === 'VolumeDivergence' || s.type === 'Divergence');
   const gateLevel = stock.stargate?.gateLevel || 0;
   
@@ -1553,8 +1605,8 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
           <DialogTitle>{stock.name} 深度诊断</DialogTitle>
           <DialogDescription>对 {stock.name} 的分析。</DialogDescription>
         </DialogHeader>
-        <div className="relative">
-            <div className={cn("p-4 md:p-6 lg:p-8 border-b flex items-center justify-between gap-3 md:gap-4 sticky top-0 bg-white z-50 shadow-sm transition-all duration-200 will-change-transform", 
+        <div className="relative min-w-0 w-full">
+            <div className={cn("p-4 pr-14 sm:pr-4 md:p-6 lg:p-8 border-b flex items-center justify-between gap-3 md:gap-4 sticky top-0 bg-white z-50 shadow-sm transition-all duration-200 will-change-transform",
                 isLimitUp ? "border-red-100" : "border-slate-100")}>
                 <div className="flex items-center gap-2 md:gap-3 lg:gap-6 min-w-0">
                     <div className={cn("w-12 h-12 md:w-14 md:h-14 lg:w-16 lg:h-16 rounded-xl md:rounded-2xl flex items-center justify-center text-white font-black text-lg md:text-xl lg:text-2xl shadow-xl ring-2 md:ring-4 ring-white shrink-0", 
@@ -1579,7 +1631,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                     </div>
                 </div>
                 <div className="flex items-center gap-2 md:gap-3 shrink-0">
-                    <div className="text-right">
+                    <div className="hidden text-right sm:block">
                         <div className={cn("text-xl md:text-2xl lg:text-3xl xl:text-4xl font-black font-mono tracking-tighter leading-none mb-1",
                             (stock.changePercent || 0) >= 0 ? "text-red-600" : "text-green-600")}>
                             {(stock.changePercent || 0) > 0 ? "+" : ""}{stock.changePercent}%
@@ -1591,7 +1643,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                             type="button"
                             aria-label="关闭龙头详情"
                             title="关闭"
-                            className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+                            className="absolute right-3 top-3 flex size-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 sm:static"
                         >
                             <X className="size-5" aria-hidden="true" />
                         </button>
@@ -1602,16 +1654,16 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
             <div className="p-4 md:p-6 lg:p-8 space-y-6 md:space-y-8 lg:space-y-10">
                 <div className={cn("rounded-3xl p-1 shadow-2xl bg-gradient-to-br border mb-6", signal.color)}>
                     <div className="bg-white/5 rounded-[20px] p-4 md:p-6 backdrop-blur-sm">
-                        <div className="flex flex-col md:flex-row items-center gap-4 md:gap-8">
-                            <div className="shrink-0 flex flex-col items-center gap-2">
+                        <div className="flex flex-col items-stretch gap-4 md:flex-row md:items-center md:gap-8">
+                            <div className="flex shrink-0 flex-col items-center gap-2 self-center">
                                 <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-white/10 flex items-center justify-center shadow-inner border border-white/20">
                                     {signal.icon}
                                 </div>
                                 <span className="text-[10px] font-black text-white/50 uppercase tracking-[0.2em]">Signal</span>
                             </div>
-                            <div className="flex-1 text-center md:text-left space-y-3">
+                            <div className="w-full min-w-0 flex-1 space-y-3 text-center md:text-left">
                                 <div className="flex flex-col md:flex-row items-center justify-center md:justify-start gap-2 md:gap-4">
-                                    <h4 className={cn("text-xl md:text-2xl lg:text-3xl font-black italic tracking-tighter uppercase drop-shadow-md", signal.textColor)}>{signal.title}</h4>
+                                    <h4 className={cn("break-words text-xl font-black italic tracking-tighter uppercase drop-shadow-md md:text-2xl lg:text-3xl", signal.textColor)}>{signal.title}</h4>
                                     <Badge variant="outline" className="text-white/80 border-white/20 bg-white/10 backdrop-blur-md text-[10px]">方向置信: {stock.aiPrediction?.prediction?.probability || 50}%</Badge>
                                 </div>
                                 
@@ -1622,13 +1674,13 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                             if (!content) return null;
                                             const cleanLabel = label.replace('【', '');
                                             return (
-                                                <div key={idx} className="flex items-start gap-2 text-xs md:text-sm">
+                                                <div key={idx} className="flex min-w-0 items-start gap-2 text-xs md:text-sm">
                                                     <span className={cn("shrink-0 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border",
                                                         cleanLabel === '态势' ? "bg-blue-500/20 text-blue-200 border-blue-500/30" :
                                                         cleanLabel === '内幕' ? "bg-purple-500/20 text-purple-200 border-purple-500/30" :
                                                         "bg-emerald-500/20 text-emerald-200 border-emerald-500/30"
                                                     )}>{cleanLabel}</span>
-                                                    <span className="text-white/90 leading-relaxed font-medium pt-0.5">{content}</span>
+                                                    <span className="min-w-0 break-words text-white/90 leading-relaxed font-medium pt-0.5">{content}</span>
                                                 </div>
                                             );
                                         })}
@@ -1637,7 +1689,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                     <div className="text-xs md:text-sm font-medium text-white/90 leading-relaxed opacity-90 whitespace-pre-line bg-black/20 p-3 rounded-lg border border-white/5">{signal.advice}</div>
                                 )}
                             </div>
-                            <div className="w-full md:w-auto flex flex-row md:flex-col gap-2 md:gap-3 shrink-0">
+                            <div className="flex w-full shrink-0 flex-row gap-2 md:w-auto md:flex-col md:gap-3">
                                  {(() => {
                                     const se = (stock.aiPrediction as any)?.smartEntry;
                                     if (se && se.urgency !== 'NO_ENTRY' && se.primary > 0) {
@@ -1661,6 +1713,32 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                     <span className={cn("text-base md:text-lg font-mono font-black", isDanger ? "text-red-400" : "text-white/60")}>¥{dynamicStopLoss.toFixed(2)}</span>
                                  </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                    <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/70 px-4 py-3 md:flex-row md:items-center md:justify-between md:px-6">
+                        <div className="flex items-center gap-2">
+                            <TrendingDown className="size-5 text-red-600" />
+                            <h3 className="text-sm font-black tracking-wider text-slate-800">卖出 / 风控计划</h3>
+                        </div>
+                        <Badge variant="outline" className={cn("w-fit text-[10px] font-black", exitTimingCopy.tone)}>
+                            {exitTimingCopy.label}
+                        </Badge>
+                    </div>
+                    <div className="grid gap-3 p-4 md:grid-cols-[1fr_1fr_2fr] md:p-6">
+                        <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
+                            <div className="text-[10px] font-black tracking-wider text-emerald-700">止盈 / 卖出参考</div>
+                            <div className="mt-1 font-mono text-lg font-black text-emerald-800">{displaySellPoint}</div>
+                        </div>
+                        <div className="rounded-2xl border border-red-100 bg-red-50/60 p-3">
+                            <div className="text-[10px] font-black tracking-wider text-red-700">动态防守线</div>
+                            <div className="mt-1 font-mono text-lg font-black text-red-800">¥{dynamicStopLoss.toFixed(2)}</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="text-[10px] font-black tracking-wider text-slate-500">执行时机</div>
+                            <div className="mt-1 text-sm font-semibold leading-6 text-slate-700">{exitTimingCopy.instruction}</div>
                         </div>
                     </div>
                 </div>
