@@ -60,6 +60,18 @@ export interface ActionablePrediction {
   reliability?: PredictionReliability;
 }
 
+export interface PredictionWaitContext extends ActionablePrediction {
+  evidenceReliability?: PredictionReliability;
+  sampleSize?: number;
+}
+
+export type PredictionWaitReason =
+  | 'INSUFFICIENT_EVIDENCE'
+  | 'DIRECTION_NOT_BULLISH'
+  | 'PROBABILITY_TOO_LOW'
+  | 'RELIABILITY_TOO_LOW'
+  | 'OTHER';
+
 export interface BuySignalGateInput {
   signalType: 'BUY' | 'SELL' | 'WAIT' | 'HOLD';
   direction: 'UP' | 'DOWN' | 'SIDEWAYS';
@@ -144,6 +156,19 @@ export const isActionableBullishPrediction = (
   (prediction.probability || 0) >= minimumProbability &&
   prediction.reliability !== 'LOW'
 );
+
+export const getPredictionWaitReason = (
+  prediction?: PredictionWaitContext,
+  minimumProbability = 70,
+): PredictionWaitReason => {
+  if (!prediction || (prediction.sampleSize || 0) < 10 || prediction.evidenceReliability === 'LOW') {
+    return 'INSUFFICIENT_EVIDENCE';
+  }
+  if (prediction.direction !== 'UP') return 'DIRECTION_NOT_BULLISH';
+  if ((prediction.probability || 0) < minimumProbability) return 'PROBABILITY_TOO_LOW';
+  if (prediction.reliability === 'LOW') return 'RELIABILITY_TOO_LOW';
+  return 'OTHER';
+};
 
 export const getBuySignalVetoReason = ({
   signalType,

@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calibratePrediction, isActionableBullishPrediction } from '../src/app/utils/predictionCalibration.ts';
+import {
+  calibratePrediction,
+  getPredictionWaitReason,
+  isActionableBullishPrediction,
+} from '../src/app/utils/predictionCalibration.ts';
 
 const completeHistory = Array.from({ length: 120 }, (_, index) => ({
   day: `2026-01-${String((index % 28) + 1).padStart(2, '0')}`,
@@ -94,6 +98,42 @@ test('only reliable bullish predictions can strengthen a buy signal', () => {
   assert.equal(isActionableBullishPrediction({ probability: 78, direction: 'DOWN', reliability: 'HIGH' }), false);
   assert.equal(isActionableBullishPrediction({ probability: 78, direction: 'UP', reliability: 'LOW' }), false);
   assert.equal(isActionableBullishPrediction({ probability: 78, direction: 'UP', reliability: 'MEDIUM' }), true);
+});
+
+test('wait reason distinguishes weak evidence from a non-bullish direction', () => {
+  assert.equal(getPredictionWaitReason({
+    direction: 'UP',
+    probability: 75,
+    reliability: 'LOW',
+    evidenceReliability: 'LOW',
+    sampleSize: 0,
+  }), 'INSUFFICIENT_EVIDENCE');
+
+  assert.equal(getPredictionWaitReason({
+    direction: 'SIDEWAYS',
+    probability: 54,
+    reliability: 'LOW',
+    evidenceReliability: 'MEDIUM',
+    sampleSize: 20,
+  }), 'DIRECTION_NOT_BULLISH');
+});
+
+test('wait reason reports probability and data reliability separately', () => {
+  assert.equal(getPredictionWaitReason({
+    direction: 'UP',
+    probability: 66,
+    reliability: 'MEDIUM',
+    evidenceReliability: 'MEDIUM',
+    sampleSize: 20,
+  }), 'PROBABILITY_TOO_LOW');
+
+  assert.equal(getPredictionWaitReason({
+    direction: 'UP',
+    probability: 72,
+    reliability: 'LOW',
+    evidenceReliability: 'MEDIUM',
+    sampleSize: 20,
+  }), 'RELIABILITY_TOO_LOW');
 });
 
 test('broad risk-off conditions cap bullish confidence despite positive stock evidence', () => {

@@ -1,10 +1,10 @@
 import React, { useMemo } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
+import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Stock, MarketPhase } from '../../types';
 import { TechnicalIndicators } from '../../utils/indicators';
 import { Badge } from '../ui/badge';
 import { Progress } from '../ui/progress';
-import { Activity, Target, Shield, TriangleAlert, Fingerprint, Zap, TrendingDown, TrendingUp, Crosshair, Lock, Rocket, Layers, BarChart3, DollarSign, Eye, Anchor, Calculator, Aperture, UserMinus, Users, Gem, Ghost, Siren, HelpCircle, Skull, Handshake, Swords, ShieldCheck, Waves, Diamond, Flame, ArrowDownToLine, Copy, CircleDot, Ban } from 'lucide-react';
+import { Activity, Target, Shield, TriangleAlert, Fingerprint, Zap, TrendingDown, TrendingUp, Crosshair, Lock, Rocket, Layers, BarChart3, DollarSign, Eye, Anchor, Calculator, Aperture, UserMinus, Users, Gem, Ghost, Siren, HelpCircle, Skull, Handshake, Swords, ShieldCheck, Waves, Diamond, Flame, ArrowDownToLine, Copy, CircleDot, Ban, X } from 'lucide-react';
 import { TimeSharingDivergence } from '../TimeSharingDivergence';
 import { ChipsDistribution } from '../ChipsDistribution';
 import { cn } from '../ui/utils';
@@ -12,7 +12,7 @@ import { calculateRealtimeMetrics, RealtimeMetrics } from '../../utils/realtimeA
 import { fetchStockTicks, fetchStockData } from '../../services/marketData';
 import { detectFundIdentity, predictSmashRisk } from '../../utils/fundIntelligence';
 import { calculateOvernightPotential, calculateLimitUpStrength } from '../../utils/scoring';
-import { isActionableBullishPrediction } from '../../utils/predictionCalibration';
+import { getPredictionWaitReason, isActionableBullishPrediction } from '../../utils/predictionCalibration';
 import { calculateLimitState } from '../../../shared/marketRules';
 import { useTrading } from '../../context/Store';
 import {
@@ -1439,12 +1439,35 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       .some(keyword => signal.title.includes(keyword));
   if (!isActionableBullishPrediction(stock.aiPrediction?.prediction) && !diagnosisRiskSignal) {
       const prediction = stock.aiPrediction?.prediction;
+      const waitReason = getPredictionWaitReason(prediction);
+      const waitCopy = {
+          INSUFFICIENT_EVIDENCE: {
+              title: "证据不足 (WAIT)",
+              advice: `【态势】当前个股数据可靠度为${prediction?.dataReliability || 'LOW'}，市场状态为${prediction?.marketDataStatus || 'UNAVAILABLE'}。\n【证据】非重叠滚动验证样本 ${prediction?.sampleSize || 0} 笔；至少10笔且形成正期望后才允许输出买入结论。\n【指令】保持观察，不依据量价估算成本或单一资金因子开仓。`
+          },
+          DIRECTION_NOT_BULLISH: {
+              title: "方向未转强 (WAIT)",
+              advice: `【态势】当前预测方向为${prediction?.direction || 'SIDEWAYS'}，校准概率为${prediction?.probability || 50}%。\n【证据】已有 ${prediction?.sampleSize || 0} 笔非重叠滚动验证样本，但当前方向尚未满足看涨条件。\n【指令】等待方向转为UP并通过风险校准，不把“有样本”等同于“可以买入”。`
+          },
+          PROBABILITY_TOO_LOW: {
+              title: "置信度不足 (WAIT)",
+              advice: `【态势】当前方向看涨，但校准概率仅为${prediction?.probability || 50}%，低于70%的执行门槛。\n【证据】非重叠滚动验证样本 ${prediction?.sampleSize || 0} 笔，证据等级为${prediction?.evidenceReliability || 'LOW'}。\n【指令】保留观察价值，等待量价、市场环境与历史正期望共同增强。`
+          },
+          RELIABILITY_TOO_LOW: {
+              title: "数据可靠度不足 (WAIT)",
+              advice: `【态势】方向与概率已达到基础条件，但综合可靠度仍为LOW。\n【证据】个股数据${prediction?.dataReliability || 'LOW'}、市场数据${prediction?.marketDataReliability || 'LOW'}、历史样本 ${prediction?.sampleSize || 0} 笔。\n【指令】等待行情与市场宽度数据恢复，不在低可靠度状态下执行预测。`
+          },
+          OTHER: {
+              title: "暂不满足入场条件 (WAIT)",
+              advice: `【态势】当前预测尚未通过全部执行门槛。\n【证据】方向${prediction?.direction || 'SIDEWAYS'}、概率${prediction?.probability || 50}%、样本 ${prediction?.sampleSize || 0} 笔。\n【指令】继续观察，等待方向、概率和可靠度同时达标。`
+          }
+      }[waitReason];
       signal = {
-          title: "证据不足 (WAIT)",
+          title: waitCopy.title,
           color: "bg-slate-900 from-slate-900 to-black border-slate-700",
           textColor: "text-slate-200",
           icon: <ShieldCheck className="w-8 h-8 text-slate-300" />,
-          advice: `【态势】当前个股数据可靠度为${prediction?.dataReliability || 'LOW'}，市场状态为${prediction?.marketDataStatus || 'UNAVAILABLE'}。\n【证据】非重叠滚动验证样本 ${prediction?.sampleSize || 0} 笔；至少10笔且形成正期望后才允许输出买入结论。\n【指令】保持观察，不依据量价估算成本或单一资金因子开仓。`
+          advice: waitCopy.advice
       };
   }
   
@@ -1525,7 +1548,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto no-scrollbar rounded-3xl border-slate-200 shadow-2xl p-0 bg-white">
+      <DialogContent className="z-[110] max-w-[90vw] max-h-[90vh] overflow-y-auto no-scrollbar rounded-3xl border-slate-200 shadow-2xl p-0 bg-white">
         <DialogHeader className="sr-only">
           <DialogTitle>{stock.name} 深度诊断</DialogTitle>
           <DialogDescription>对 {stock.name} 的分析。</DialogDescription>
@@ -1555,12 +1578,24 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                         </div>
                     </div>
                 </div>
-                <div className="text-right shrink-0">
-                    <div className={cn("text-xl md:text-2xl lg:text-3xl xl:text-4xl font-black font-mono tracking-tighter leading-none mb-1", 
-                        (stock.changePercent || 0) >= 0 ? "text-red-600" : "text-green-600")}>
-                        {(stock.changePercent || 0) > 0 ? "+" : ""}{stock.changePercent}%
+                <div className="flex items-center gap-2 md:gap-3 shrink-0">
+                    <div className="text-right">
+                        <div className={cn("text-xl md:text-2xl lg:text-3xl xl:text-4xl font-black font-mono tracking-tighter leading-none mb-1",
+                            (stock.changePercent || 0) >= 0 ? "text-red-600" : "text-green-600")}>
+                            {(stock.changePercent || 0) > 0 ? "+" : ""}{stock.changePercent}%
+                        </div>
+                        <div className="text-[9px] md:text-[10px] lg:text-xs font-black text-slate-400 uppercase tracking-widest">¥{current.toFixed(2)}</div>
                     </div>
-                    <div className="text-[9px] md:text-[10px] lg:text-xs font-black text-slate-400 uppercase tracking-widest">¥{current.toFixed(2)}</div>
+                    <DialogClose asChild>
+                        <button
+                            type="button"
+                            aria-label="关闭龙头详情"
+                            title="关闭"
+                            className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+                        >
+                            <X className="size-5" aria-hidden="true" />
+                        </button>
+                    </DialogClose>
                 </div>
             </div>
 
