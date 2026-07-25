@@ -1,4 +1,4 @@
-import React, { useState, lazy, Suspense } from 'react';
+import React, { useCallback, useEffect, useState, lazy, Suspense } from 'react';
 import { TradingProvider, useTrading } from './context/Store';
 
 // V65.1 PERF: Lazy load pages — only the active tab's code is loaded
@@ -32,10 +32,27 @@ import { Badge } from './components/ui/badge';
 import { cn } from './components/ui/utils';
 import { BlackSwanOverlay } from './components/BlackSwanOverlay';
 import { deriveMarketHealth } from './utils/dataHealth';
+import { getPageFromSearch, getPageUrl, type PageId } from './utils/pageNavigation';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTabState] = useState<PageId>(() => getPageFromSearch(window.location.search));
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    const syncPageFromUrl = () => {
+      setActiveTabState(getPageFromSearch(window.location.search));
+    };
+
+    window.addEventListener('popstate', syncPageFromUrl);
+    return () => window.removeEventListener('popstate', syncPageFromUrl);
+  }, []);
+
+  const setActiveTab = useCallback((page: PageId) => {
+    if (getPageFromSearch(window.location.search) !== page) {
+      window.history.pushState(null, '', getPageUrl(window.location.href, page));
+    }
+    setActiveTabState(page);
+  }, []);
   
   return (
     <TradingProvider>
@@ -49,7 +66,14 @@ export default function App() {
   );
 }
 
-const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any) => {
+type AppInnerProps = {
+  activeTab: PageId;
+  setActiveTab: (page: PageId) => void;
+  sidebarOpen: boolean;
+  setSidebarOpen: React.Dispatch<React.SetStateAction<boolean>>;
+};
+
+const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: AppInnerProps) => {
   const {
     connectionStatus,
     isSaving,
@@ -103,7 +127,13 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
     }
   };
 
-  const navItems = [
+  const navItems: Array<{
+    id: PageId;
+    label: string;
+    shortLabel: string;
+    mobileTitle: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }> = [
     { id: 'dashboard', label: '市场情绪监测', shortLabel: '监测', mobileTitle: '市场监测', icon: LayoutDashboard },
     { id: 'themes', label: '板块共振确认', shortLabel: '板块', mobileTitle: '板块共振', icon: Target },
     { id: 'pool', label: '龙头核心池', shortLabel: '龙头', mobileTitle: '龙头池', icon: Flame },
@@ -141,7 +171,7 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: any)
       ? { label: '保存失败', detail: '浏览器存储空间不足或不可用', color: 'text-red-700', Icon: CircleAlert, spinning: false }
       : { label: '已保存', detail: '策略、自选与持仓保存在当前浏览器', color: 'text-green-700', Icon: HardDrive, spinning: false };
 
-  const NavItem = ({ id, label, icon: Icon }: { id: string, label: string, icon: any }) => (
+  const NavItem = ({ id, label, icon: Icon }: { id: PageId, label: string, icon: any }) => (
     <button
       onClick={() => { setActiveTab(id); setSidebarOpen(false); }}
       aria-current={activeTab === id ? 'page' : undefined}
