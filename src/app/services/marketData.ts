@@ -12,6 +12,8 @@ import {
 // Simple cache for stock data to deduplicate rapid requests
 const stockDataCache = new Map<string, { data: any, timestamp: number }>();
 const CACHE_TTL = 3000; // 3 seconds cache for live data
+const STALE_STOCK_TTL = 15 * 60_000;
+const lastGoodStockData = new Map<string, { data: Partial<Stock>; timestamp: number }>();
 const MARKET_STATS_CACHE_TTL = 5000;
 
 // In-flight request deduplication
@@ -645,7 +647,7 @@ export const fetchStockData = async (codes: string[], forceRefresh = false): Pro
     try {
       const resp = await fetchWithRetry(url, {
         headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-      }, 1, 12000, true);
+      }, 0, 22000, true);
       
       if (!resp.ok) throw new Error(`Backend stock fetch failed with status ${resp.status}`);
       const json = await resp.json();
@@ -655,6 +657,15 @@ export const fetchStockData = async (codes: string[], forceRefresh = false): Pro
           const formatted = formattedCodes[index];
           if (json.data && json.data[formatted]) {
               results[originalCode] = json.data[formatted];
+              lastGoodStockData.set(originalCode, {
+                data: json.data[formatted],
+                timestamp: Date.now(),
+              });
+          } else {
+              const stale = lastGoodStockData.get(originalCode);
+              if (stale && Date.now() - stale.timestamp <= STALE_STOCK_TTL) {
+                results[originalCode] = stale.data;
+              }
           }
       });
 
@@ -663,7 +674,14 @@ export const fetchStockData = async (codes: string[], forceRefresh = false): Pro
       return finalData;
     } catch (error: any) {
       console.error("Fetch stock data failed", error);
-      return { data: {}, isMock: false };
+      const staleResults: Record<string, Partial<Stock>> = {};
+      codes.forEach(code => {
+        const stale = lastGoodStockData.get(code);
+        if (stale && Date.now() - stale.timestamp <= STALE_STOCK_TTL) {
+          staleResults[code] = stale.data;
+        }
+      });
+      return { data: staleResults, isMock: false };
     } finally {
       inFlightRequests.delete(cacheKey);
     }

@@ -350,7 +350,10 @@ api.get("/market/themes", async (c) => {
               const fetchEmWithRetry = async (retries = 1) => {
                   for (let i = 0; i <= retries; i++) {
                       const controller = new AbortController();
-                      const timeout = setTimeout(() => controller.abort(), 8000);
+                      // Flow data is optional enrichment. Keep its total retry
+                      // budget below the Tencent L1 quote deadline so a slow
+                      // Eastmoney host can never delay otherwise usable prices.
+                      const timeout = setTimeout(() => controller.abort(), 3500);
                       try {
                           const resp = await fetch(emUrls[i % emUrls.length], {
                               signal: controller.signal,
