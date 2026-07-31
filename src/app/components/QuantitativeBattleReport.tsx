@@ -15,7 +15,7 @@ export const QuantitativeBattleReport: React.FC<Props> = ({ metrics, phase, stoc
   const limitUpCount = stocks.filter(s => s.isLimitUp).length;
   const highPositionCount = stocks.filter(s => (s.limitLadder || 0) >= 3).length;
   // Adjusted for larger market size (5300+ stocks): Lower multiplier for limitUpCount
-  const sentimentEnergy = Math.min(100, (limitUpCount * 1.2) + (highPositionCount * 10));
+  const sentimentEnergy = Math.round(Math.min(100, (limitUpCount * 1.2) + (highPositionCount * 10)) * 10) / 10;
   
   const getPhaseColor = () => {
     switch(phase) {
@@ -30,8 +30,8 @@ export const QuantitativeBattleReport: React.FC<Props> = ({ metrics, phase, stoc
   const battleMetrics = [
     { label: '情绪能量 (SE)', value: `${sentimentEnergy}%`, icon: Flame, color: 'text-orange-500', description: '全市场追涨意愿强度' },
     { label: '连板梯队', value: `${highPositionCount}席`, icon: BarChart3, color: 'text-red-500', description: '3板及以上核心席位' },
-    { label: '封板强度', value: `${(metrics.limitUpStrength || 75).toFixed(1)}%`, icon: Target, color: 'text-purple-500', description: '涨停未炸板比例' },
-    { label: '背离指数', value: metrics.divergenceIndex || '0.0', icon: TrendingUp, color: 'text-blue-500', description: '指数与情绪背离程度' }
+    { label: '封板强度', value: Number.isFinite(metrics.limitUpStrength) ? `${metrics.limitUpStrength.toFixed(1)}%` : '--', icon: Target, color: 'text-purple-500', description: '涨停未炸板比例' },
+    { label: '背离指数', value: Number.isFinite(metrics.divergenceIndex) ? metrics.divergenceIndex.toFixed(1) : '--', icon: TrendingUp, color: 'text-blue-500', description: '指数与情绪背离程度' }
   ];
 
   return (
@@ -60,8 +60,8 @@ export const QuantitativeBattleReport: React.FC<Props> = ({ metrics, phase, stoc
                 <Zap className="w-6 h-6 text-white" />
               </div>
               <div>
-                <CardTitle className="text-xl font-black text-slate-900 uppercase italic tracking-tight">量化战报摘要 (Quantum Battle Report)</CardTitle>
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">实战博弈分析系统 V9.2</div>
+                <CardTitle className="text-xl font-black text-slate-900 tracking-tight">量价规则战报摘要</CardTitle>
+                <div className="text-[10px] font-black text-slate-400 tracking-[0.2em] mt-1">当前快照 · 非收益预测</div>
               </div>
             </div>
             <Badge className={cn("px-4 py-2 font-black italic text-sm", 
@@ -91,10 +91,10 @@ export const QuantitativeBattleReport: React.FC<Props> = ({ metrics, phase, stoc
                   <div className="space-y-2">
                     <div className="flex justify-between text-xs font-black uppercase italic text-slate-500">
                       <span>市场混沌熵值</span>
-                      <span>{(100 - (metrics.marketTemp || 50)).toFixed(1)}%</span>
+                      <span>{Number.isFinite(metrics.marketTemp) ? `${(100 - metrics.marketTemp).toFixed(1)}%` : '--'}</span>
                     </div>
                     <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-slate-900 transition-all duration-1000" style={{ width: `${100 - (metrics.marketTemp || 50)}%` }} />
+                      <div className="h-full bg-slate-900 transition-all duration-1000" style={{ width: `${Number.isFinite(metrics.marketTemp) ? 100 - metrics.marketTemp : 0}%` }} />
                     </div>
                   </div>
                 </div>
@@ -106,7 +106,7 @@ export const QuantitativeBattleReport: React.FC<Props> = ({ metrics, phase, stoc
                 </h4>
                 <p className="text-xs font-bold text-slate-600 leading-relaxed">
                   当前处于 <span className={cn("font-black italic", getPhaseColor())}>{phase}</span> 周期。
-                  {phase === 'Climax' ? '高位连板出现缩量一致性加速，次日分歧概率 85%，建议严格执行卖出指令。' : 
+                  {phase === 'Climax' ? '高位连板出现缩量一致性加速，次日分歧风险上升；请根据持仓防守位分批管理。' :
                    phase === 'Ebb' ? '亏钱效应在核心股蔓延，建议仓位控制在 2 成以下，防范补跌。' : 
                    '市场处于低位混沌期，试错成本较高，建议关注新题材的首板表现。'}
                 </p>

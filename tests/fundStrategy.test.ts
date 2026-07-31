@@ -20,7 +20,7 @@ test('fund prediction reports out-of-sample evidence instead of heuristic confid
   assert.equal(prediction.direction, 'Bull');
   assert.equal(prediction.dataReliability, 'HIGH');
   assert.equal(prediction.evidenceReliability, 'HIGH');
-  assert.equal(prediction.calibrationStatus, 'OUT_OF_SAMPLE');
+  assert.equal(prediction.calibrationStatus, 'WALK_FORWARD_PROXY');
   assert.ok(prediction.sampleSize >= 30);
   assert.ok(prediction.confidence > 50);
   assert.ok(prediction.brierScore !== null);

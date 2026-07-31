@@ -55,7 +55,7 @@ export const ExtremeAlert: React.FC<Props> = ({ phase, temp, hedgeFactor = 0 }) 
   }[phase as 'Climax' | 'Ebb' | 'Ice' | 'Repair'] || {
       icon: <TriangleAlert className="w-5 h-5" />,
       title: "系统性风险预警 (System Risk)",
-      desc: "背离指数异常，风险对冲因子高。主力意图不明，建议轻仓/空仓观望。",
+      desc: "背离指数异常，风险对冲因子高。资金方向证据不足，建议轻仓或观望。",
       bg: "bg-orange-600",
       text: "text-white",
       border: "border-orange-700"

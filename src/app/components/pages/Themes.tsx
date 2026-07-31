@@ -173,20 +173,20 @@ export const Themes: React.FC = () => {
                                 // Decision: If market data shows MORE limit ups than local, use market data for "Broad View"
                                 // But keep local avg change as proxy for intensity if available
                                 const displayLimitUps = Math.floor(Math.max(localLimitUps, marketLimitUps));
-                                const displayTotal = Math.floor(Math.max(sectorStocks.length, displayLimitUps * 2)); // Rough estimate if total missing
-                                const displayAvgChange = hasLocalData ? localAvgChange : (displayLimitUps > 0 ? 3.5 : 0); // Mock avg change if no local data
+                                const displayTotal = hasLocalData ? sectorStocks.length : undefined;
+                                const displayAvgChange = hasLocalData ? localAvgChange : undefined;
                                 
                                 return {
                                     ...theme,
                                     avgChange: displayAvgChange,
                                     limitUps: displayLimitUps,
                                     totalStocks: displayTotal,
-                                    calculatedLeader: localLeader || (theme.leaderName ? { name: theme.leaderName, changePercent: 10 } as Stock : undefined)
+                                    calculatedLeader: localLeader || (theme.leaderName ? { name: theme.leaderName } as Stock : undefined)
                                 };
                             })
                             .sort((a, b) => {
                                 if (b.limitUps !== a.limitUps) return b.limitUps - a.limitUps;
-                                return b.avgChange - a.avgChange;
+                                return (b.avgChange ?? Number.NEGATIVE_INFINITY) - (a.avgChange ?? Number.NEGATIVE_INFINITY);
                             })
                             .map((theme) => {
                               return (
@@ -205,8 +205,9 @@ export const Themes: React.FC = () => {
                                                 if (theme.limitUps >= 8) return { label: '绝对主线', variant: 'destructive' as const, className: "" };
                                                 if (theme.limitUps >= 4) return { label: '强势板块', variant: 'destructive' as const, className: "" };
                                                 if (theme.limitUps >= 2) return { label: '局部活跃', variant: 'default' as const, className: "bg-blue-600" };
-                                                if (theme.avgChange > 2) return { label: '异动观察', variant: 'secondary' as const, className: "" };
-                                                if (theme.avgChange < -1) return { label: '调整承压', variant: 'outline' as const, className: "" };
+                                                if (theme.avgChange !== undefined && theme.avgChange > 2) return { label: '异动观察', variant: 'secondary' as const, className: "" };
+                                                if (theme.avgChange !== undefined && theme.avgChange < -1) return { label: '调整承压', variant: 'outline' as const, className: "" };
+                                                if (theme.avgChange === undefined) return { label: '数据待补', variant: 'outline' as const, className: "text-slate-500" };
                                                 return { label: '震荡整理', variant: 'secondary' as const, className: "" };
                                             };
                                             const status = getStatus();
@@ -224,13 +225,15 @@ export const Themes: React.FC = () => {
                                     </TableCell>
                                     <TableCell>
                                           <div className="flex flex-col gap-1.5">
-                                              <div className={cn("flex items-center gap-1", theme.avgChange > 0 ? "text-red-600" : "text-green-600")}>
+                                              <div className={cn("flex items-center gap-1", (theme.avgChange || 0) > 0 ? "text-red-600" : "text-slate-500")}>
                                                   <TrendingUp className="w-3 h-3" />
-                                                  <span className="text-xs font-bold font-mono">{theme.avgChange > 0 ? '+' : ''}{theme.avgChange.toFixed(1)}%</span>
+                                                  <span className="text-xs font-bold font-mono">
+                                                    {theme.avgChange === undefined ? '--' : `${theme.avgChange > 0 ? '+' : ''}${theme.avgChange.toFixed(1)}%`}
+                                                  </span>
                                               </div>
                                               <div className="flex items-center gap-1 text-orange-600">
                                                   <Zap className="w-3 h-3" />
-                                                  <span className="text-xs font-bold font-mono">{theme.limitUps}/{theme.totalStocks} 涨停</span>
+                                                  <span className="text-xs font-bold font-mono">{theme.limitUps}/{theme.totalStocks ?? '--'} 涨停</span>
                                               </div>
                                           </div>
                                     </TableCell>
@@ -240,9 +243,11 @@ export const Themes: React.FC = () => {
                                                 <Badge variant="outline" className="font-bold font-mono text-blue-600 bg-blue-50/50 border-blue-100 uppercase tracking-tighter w-fit">
                                                     {theme.calculatedLeader.name}
                                                 </Badge>
-                                                <span className={cn("text-[9px] font-black", (theme.calculatedLeader.changePercent||0) > 0 ? "text-red-500" : "text-green-500")}>
-                                                    {(theme.calculatedLeader.changePercent||0) > 0 ? '+' : ''}{theme.calculatedLeader.changePercent}%
-                                                </span>
+                                                {theme.calculatedLeader.changePercent !== undefined && (
+                                                  <span className={cn("text-[9px] font-black", theme.calculatedLeader.changePercent > 0 ? "text-red-500" : "text-green-500")}>
+                                                      {theme.calculatedLeader.changePercent > 0 ? '+' : ''}{theme.calculatedLeader.changePercent}%
+                                                  </span>
+                                                )}
                                            </div>
                                        ) : '-'}
                                     </TableCell>

@@ -84,11 +84,11 @@ export const TrapGuardAlerts: React.FC<Props> = React.memo(({ stocks, onSelect }
       <div className="p-4 bg-slate-900 flex items-center justify-between">
           <div className="flex items-center gap-3">
               <ShieldAlert className="w-4 h-4 text-red-500" />
-              <span className="text-[10px] font-black text-white/50 uppercase tracking-widest">算法拦截主力虚假申报诱多</span>
+              <span className="text-[10px] font-black text-white/50 uppercase tracking-widest">规则识别挂单与成交背离风险</span>
           </div>
-          <button className="text-[9px] font-black text-red-500 hover:text-red-400 uppercase tracking-widest transition-colors italic">
+          <span className="text-[9px] font-black text-red-500 uppercase tracking-widest italic">
               实时更新中
-          </button>
+          </span>
       </div>
     </Card>
   );

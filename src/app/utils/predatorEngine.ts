@@ -83,6 +83,8 @@ export interface PredatorSignal {
     sampleSize?: number;
     marketRegime?: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
     marketDataQuality?: number;
+    confidenceLow?: number;
+    confidenceHigh?: number;
     warnings?: string[];
     description: string;
     direction: "UP" | "DOWN" | "SIDEWAYS";
@@ -2717,11 +2719,14 @@ export const analyzeStockSignal = (
     // Expanding-window walk-forward: each reported trade is evaluated with a
     // stop selected only from setups that occurred before it.
     const validationTrades: TradeResult[] = [];
+    const walkForwardStops: number[] = [];
     for (let index = 10; index < setups.length; index++) {
       const walkForwardStop = chooseOptimalStop(setups.slice(0, index));
+      walkForwardStops.push(walkForwardStop);
       validationTrades.push(simulateTrade(setups[index], walkForwardStop));
     }
-    const optimalStopMult = chooseOptimalStop(setups);
+    const sortedStops = [...walkForwardStops].sort((a, b) => a - b);
+    const optimalStopMult = sortedStops[Math.floor(sortedStops.length / 2)] || 1.5;
     const validation = summarize(validationTrades);
 
     return {
@@ -2822,12 +2827,12 @@ export const analyzeStockSignal = (
       // 如果回测胜率高(>60%),可收紧最大止损%; 胜率低(<40%),放宽止损
       if (backtestResult.winRate > 60) {
         stopProfile.maxPct = Math.max(0.03, stopProfile.maxPct * 0.85);
-        stopProfile.label = `代理验证止损(胜率${backtestResult.winRate.toFixed(0)}%·${backtestResult.sampleSize}样本)`;
+        stopProfile.label = `滚动代理止损(命中${backtestResult.winRate.toFixed(0)}%·${backtestResult.sampleSize}样本)`;
       } else if (backtestResult.winRate < 40) {
         stopProfile.maxPct = Math.min(0.10, stopProfile.maxPct * 1.25);
-        stopProfile.label = `代理验证止损(胜率${backtestResult.winRate.toFixed(0)}%·宽防护)`;
+        stopProfile.label = `滚动代理止损(命中${backtestResult.winRate.toFixed(0)}%·宽防护)`;
       } else {
-        stopProfile.label = `代理验证止损(胜率${backtestResult.winRate.toFixed(0)}%·${backtestResult.sampleSize}样本)`;
+        stopProfile.label = `滚动代理止损(命中${backtestResult.winRate.toFixed(0)}%·${backtestResult.sampleSize}样本)`;
       }
     }
     
@@ -3352,6 +3357,8 @@ export const analyzeStockSignal = (
       sampleSize: calibratedPrediction.sampleSize,
       marketRegime: calibratedPrediction.marketRegime,
       marketDataQuality: calibratedPrediction.marketDataQuality,
+      confidenceLow: calibratedPrediction.confidenceLow,
+      confidenceHigh: calibratedPrediction.confidenceHigh,
       warnings: calibratedPrediction.warnings,
       description: predictionDesc || (expectedDirection === "UP"
           ? "看涨 (Bullish)"

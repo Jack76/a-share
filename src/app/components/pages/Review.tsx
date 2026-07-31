@@ -11,24 +11,31 @@ import { Separator } from '../ui/separator';
 import { AlertCircle, Target, ShieldCheck, Flame, Zap } from 'lucide-react';
 import { cn } from '../ui/utils';
 import { QuantitativeBattleReport } from '../QuantitativeBattleReport';
+import { getChinaTradingClock } from '../../utils/marketClock';
+import { readPredictionLedger, summarizePredictionLedger } from '../../utils/predictionLedger';
 
 export const Review: React.FC = () => {
-  const { journal, setJournal, phase, metrics, stocks, themes, marketIndices, marketStats } = useTrading();
+  const { journal, setJournal, journalHistory, phase, metrics, stocks, themes, marketIndices, marketStats } = useTrading();
   const [localJournal, setLocalJournal] = useState(journal);
+  const ledgerSummary = summarizePredictionLedger(readPredictionLedger());
   
   // Sync when context changes (initial load) & Auto-Date Correction
   useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    // If the stored journal is from a previous day, roll it over to today
-    // (Preserving content so user can decide to clear or keep)
+    const today = getChinaTradingClock().tradeDate;
     if (journal.date !== today) {
-        const updatedJournal = { ...journal, date: today };
+        const updatedJournal = {
+          date: today,
+          phase,
+          whatWentRight: '',
+          whatWentWrong: '',
+          strategy: '',
+        };
         setLocalJournal(updatedJournal);
         setJournal(updatedJournal);
     } else {
         setLocalJournal(journal);
     }
-  }, [journal, setJournal]);
+  }, [journal, phase, setJournal]);
 
   // Auto-save mechanism (Debounce 1.5s)
   useEffect(() => {
@@ -160,7 +167,7 @@ export const Review: React.FC = () => {
           .slice(0, 3)
           .map(s => `${s.name}(诱多${s.trapRiskScore})`);
 
-      const targets = `\n【全市场目标锁定 (AI Scan)】\n[ASSAULT] 核心晋级：${dragons.length ? dragons.join('、') : '无（建议空仓）'}\n[EVACUATE] 风险规避：${risks.length ? risks.join('、') : '无'}`;
+      const targets = `\n【全市场规则筛选】\n[关注] 核心晋级：${dragons.length ? dragons.join('、') : '无（建议空仓）'}\n[规避] 风险标的：${risks.length ? risks.join('、') : '无'}`;
       
       strategy += targets;
       
@@ -196,7 +203,7 @@ export const Review: React.FC = () => {
           wrongs.push("今日操作纪律执行良好，未出现明显的冲动交易或踏空失误。");
       }
 
-      // Update state - FORCE UPDATE (Overwriting previous AI generation to ensure freshness)
+      // Rules-based summary using the current snapshot.
       setLocalJournal(prev => ({
           ...prev,
           whatWentRight: marketContext + (rights.length ? `\n\n【账户高光】\n${rights.join('；')}` : ""),
@@ -204,7 +211,7 @@ export const Review: React.FC = () => {
           strategy: strategy
       }));
       
-      toast.success("AI 已完成全市场深度复盘推演 (v10.2 Strategy Engine)");
+      toast.success("已根据当前行情生成规则复盘");
   };
 
   return (
@@ -221,7 +228,7 @@ export const Review: React.FC = () => {
         </div>
         <div className="flex items-center gap-3">
             <Badge variant="outline" className="px-4 py-1.5 border-slate-200 bg-white text-slate-600 font-black">
-                AUTO-SYNC ACTIVE
+                仅本机自动保存
             </Badge>
         </div>
       </div>
@@ -292,9 +299,26 @@ export const Review: React.FC = () => {
                             onClick={generateInsights}
                         >
                             <Sparkles className="w-4 h-4 mr-2 text-red-500" />
-                            AI 智能推演复盘
+                            生成规则复盘
                         </Button>
                     </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border border-slate-200 bg-white shadow-sm">
+                <CardContent className="p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">真实预测跟踪账本</div>
+                      <div className="mt-1 text-2xl font-black text-slate-900">{ledgerSummary.resolved}<span className="ml-1 text-xs text-slate-400">已完成</span></div>
+                    </div>
+                    <Badge variant="outline" className="text-[9px]">{ledgerSummary.pending} 待验证</Badge>
+                  </div>
+                  <p className="mt-3 text-[10px] leading-relaxed text-slate-500">
+                    {ledgerSummary.hitRate === null
+                      ? '尚无满 5 个交易日的真实跟踪样本，暂不展示命中率。'
+                      : `方向命中率 ${ledgerSummary.hitRate.toFixed(1)}%，仅统计本机持续记录的实时信号。`}
+                  </p>
                 </CardContent>
               </Card>
 
@@ -362,10 +386,33 @@ export const Review: React.FC = () => {
                     />
                   </div>
                 </CardContent>
-                <CardFooter className="flex justify-between border-t border-slate-100 bg-slate-50/50 p-6">
-                    <Button variant="ghost" size="sm" className="text-[10px] font-black uppercase tracking-widest text-slate-400" disabled>
-                        <History className="w-4 h-4 mr-2" /> View Past Sessions
-                    </Button>
+                <CardFooter className="block border-t border-slate-100 bg-slate-50/50 p-6">
+                    <details className="group">
+                      <summary className="flex cursor-pointer list-none items-center gap-2 text-[10px] font-black tracking-widest text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
+                        <History className="w-4 h-4" /> 历史复盘（{journalHistory.filter(item => item.date !== localJournal.date).length}）
+                      </summary>
+                      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {journalHistory.filter(item => item.date !== localJournal.date).length > 0 ? (
+                          journalHistory
+                            .filter(item => item.date !== localJournal.date)
+                            .map(item => (
+                              <details key={item.date} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                                <summary className="cursor-pointer list-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
+                                  <span className="block text-xs font-black text-slate-800">{item.date}</span>
+                                  <span className="mt-0.5 block truncate text-[10px] text-slate-500">{item.whatWentRight || item.strategy || '空白复盘'}</span>
+                                </summary>
+                                <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-[10px] leading-relaxed text-slate-600">
+                                  <p className="whitespace-pre-wrap">{item.whatWentRight || '无盘面记录'}</p>
+                                  <p className="whitespace-pre-wrap">{item.whatWentWrong || '无反思记录'}</p>
+                                  <p className="whitespace-pre-wrap font-bold">{item.strategy || '无次日计划'}</p>
+                                </div>
+                              </details>
+                            ))
+                        ) : (
+                          <span className="text-[10px] text-slate-400">完成当天复盘后，历史记录会保存在当前浏览器。</span>
+                        )}
+                      </div>
+                    </details>
                 </CardFooter>
               </Card>
           </div>

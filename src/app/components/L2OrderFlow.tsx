@@ -98,7 +98,7 @@ export const L2OrderFlow: React.FC<Props> = ({ stock }) => {
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                         <Activity className="w-4 h-4 text-emerald-500" />
-                        <span className="text-[10px] font-black text-white/70 uppercase tracking-widest">逐笔委托流量 (L2 Flow)</span>
+                        <span className="text-[10px] font-black text-white/70 uppercase tracking-widest">逐笔成交压力（非完整 L2 委托）</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse" />
@@ -108,7 +108,7 @@ export const L2OrderFlow: React.FC<Props> = ({ stock }) => {
 
                 <div className="space-y-2">
                     <div className="flex justify-between text-[10px] font-black uppercase tracking-tighter">
-                        <span className="text-red-500">主力买盘 {buyPressure.toFixed(0)}%</span>
+                        <span className="text-red-500">估算买入压力 {buyPressure.toFixed(0)}%</span>
                         <span className="text-green-500">抛压 { (100 - buyPressure).toFixed(0)}%</span>
                     </div>
                     <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden flex shadow-inner">

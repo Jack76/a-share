@@ -662,7 +662,7 @@ export const getPresetStocks = (): Stock[] => {
                 role: role,
                 status: 'Watch',
                 marketValue: marketVal,
-                notes: `【AI算法推荐】${s.note || theme.name + '核心龙头'}`,
+                notes: `【规则候选】${s.note || theme.name + '核心龙头'}`,
                 currentPrice: 0,
                 changePercent: 0,
                 prevClose: 0,

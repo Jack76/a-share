@@ -12,6 +12,8 @@ export const SignalSystemGuide: React.FC = () => {
           variant="ghost" 
           size="sm" 
           className="h-10 px-3 rounded-xl text-slate-400 hover:text-slate-600 font-bold text-[10px] uppercase tracking-widest gap-2"
+          aria-label="打开信号体系说明"
+          title="信号体系说明"
         >
           <Info className="w-4 h-4" />
           <span className="hidden sm:inline">体系说明</span>
@@ -25,9 +27,9 @@ export const SignalSystemGuide: React.FC = () => {
           </DialogTitle>
           <DialogDescription className="space-y-1" asChild>
             <div className="text-sm text-muted-foreground">
-              <div>全天候多维度量化决策引擎 • 核心信号图谱</div>
+              <div>多维度规则辅助工具 • 核心信号图谱</div>
               <div className="text-xs text-indigo-600 font-bold bg-indigo-50 px-2 py-1 rounded w-fit mt-1">
-                ✨ V16.0 特性: 去绝对化阈值 · 自适应股性方差 · 幽灵协议拆单检测
+                V16.0：去绝对化阈值 · 自适应波动阈值 · 拆单特征代理
               </div>
             </div>
           </DialogDescription>
@@ -77,7 +79,7 @@ export const SignalSystemGuide: React.FC = () => {
                 <p className="text-xs text-slate-500 leading-relaxed">
                   <strong className="text-slate-700">场景：</strong> 上升趋势中的良性回调 (MA20支撑)。<br/>
                   <strong className="text-slate-700">逻辑：</strong> 牛回头。缩量洗盘，主力未出逃。<br/>
-                  <strong className="text-slate-700">优势：</strong> 胜率最高，盈亏比优秀，适合稳健操作。
+                  <strong className="text-slate-700">特点：</strong> 规则倾向于较紧的风险控制，实际表现需以滚动样本验证为准。
                 </p>
               </div>
 
@@ -153,7 +155,7 @@ export const SignalSystemGuide: React.FC = () => {
                 <p className="text-xs text-slate-500 leading-relaxed">
                   <strong className="text-slate-700">场景：</strong> 个股、板块、情绪周期三维共振。<br/>
                   <strong className="text-slate-700">逻辑：</strong> 天时地利人和，合力最强。<br/>
-                  <strong className="text-slate-700">胜率：</strong> 历史回测胜率最高 (&gt;85%)。
+                  <strong className="text-slate-700">验证：</strong> 不设固定胜率；以当前标的的非重叠滚动样本和真实跟踪账本为准。
                 </p>
               </div>
 

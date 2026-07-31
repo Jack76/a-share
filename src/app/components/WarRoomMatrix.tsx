@@ -103,7 +103,7 @@ export const WarRoomMatrix: React.FC = () => {
                         </div>
                         <div className="w-px h-8 md:h-10 bg-current/10" />
                         <div className="text-center">
-                            <div className="text-[9px] md:text-[10px] uppercase opacity-60 mb-1 font-black">胜率预判</div>
+                            <div className="text-[9px] md:text-[10px] uppercase opacity-60 mb-1 font-black">市场温度</div>
                             <div className="text-xl md:text-2xl font-black font-mono">{(metrics.marketTemp || 50).toFixed(0)}%</div>
                         </div>
                     </div>

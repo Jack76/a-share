@@ -8,10 +8,10 @@ export const MarketSentiment: React.FC = () => {
   const { metrics } = useTrading();
   
   const factors = [
-    { label: '昨曾涨停溢价', value: metrics.limitUpCount > 90 ? '+2.4%' : '-1.2%', status: metrics.limitUpCount > 90 ? 'pos' : 'neg' },
-    { label: '连板晋级率', value: '34.2%', status: 'pos' },
-    { label: '反包力度', value: '强', status: 'pos' },
-    { label: '炸板率', value: '28%', status: 'neg' }
+    { label: '昨日涨停反馈', value: `${metrics.yesterdayLimitUpEffect > 0 ? '+' : ''}${metrics.yesterdayLimitUpEffect.toFixed(1)}%`, status: metrics.yesterdayLimitUpEffect >= 0 ? 'pos' : 'neg' },
+    { label: '连板晋级率', value: metrics.relaySuccessRate === undefined ? '--' : `${metrics.relaySuccessRate.toFixed(1)}%`, status: (metrics.relaySuccessRate || 0) >= 50 ? 'pos' : 'neg' },
+    { label: '涨停家数', value: String(metrics.limitUpCount), status: metrics.limitUpCount >= metrics.limitDownCount ? 'pos' : 'neg' },
+    { label: '行情覆盖', value: metrics.marketDataCoverage === undefined ? '--' : `${(metrics.marketDataCoverage * 100).toFixed(0)}%`, status: (metrics.marketDataCoverage || 0) >= 0.75 ? 'pos' : 'neg' }
   ];
 
   return (

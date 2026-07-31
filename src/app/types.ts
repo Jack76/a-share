@@ -267,7 +267,9 @@ export interface Stock {
         marketDataReliability?: 'LOW' | 'MEDIUM' | 'HIGH';
         marketDataStatus?: 'FRESH' | 'PARTIAL' | 'STALE' | 'UNAVAILABLE';
         evidenceReliability?: 'LOW' | 'MEDIUM' | 'HIGH';
-        calibrationStatus?: 'UNVALIDATED' | 'LIMITED' | 'OUT_OF_SAMPLE';
+        calibrationStatus?: 'UNVALIDATED' | 'LIMITED' | 'WALK_FORWARD_PROXY';
+        confidenceLow?: number;
+        confidenceHigh?: number;
         sampleSize?: number;
         marketRegime?: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
         marketDataQuality?: number;

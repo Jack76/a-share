@@ -48,10 +48,10 @@ export const LimitLadder: React.FC<Props> = ({ stocks, marketTemp = 50 }) => {
     });
 
     return [
-      { tier: '5连板+', label: '空间博弈/信仰板', data: buckets['High'], color: 'bg-red-600', icon: Crown, alpha: 92 },
-      { tier: '3-4连板', label: '核心中军/分歧板', data: buckets['Mid'], color: 'bg-orange-500', icon: Target, alpha: 78 },
-      { tier: '2连板', label: '梯队承接/卡位板', data: buckets['Low'], color: 'bg-slate-900', icon: Zap, alpha: 45 },
-      { tier: '首板', label: '先手试错/题材挖掘', data: buckets['First'], color: 'bg-slate-600', icon: Layers, alpha: 20 }
+      { tier: '5连板+', label: '空间博弈/信仰板', data: buckets['High'], color: 'bg-red-600', icon: Crown },
+      { tier: '3-4连板', label: '核心中军/分歧板', data: buckets['Mid'], color: 'bg-orange-500', icon: Target },
+      { tier: '2连板', label: '梯队承接/卡位板', data: buckets['Low'], color: 'bg-slate-900', icon: Zap },
+      { tier: '首板', label: '先手试错/题材挖掘', data: buckets['First'], color: 'bg-slate-600', icon: Layers }
     ];
   };
 
@@ -73,7 +73,7 @@ export const LimitLadder: React.FC<Props> = ({ stocks, marketTemp = 50 }) => {
         <CardTitle className="text-sm flex items-center justify-between">
             <div className="flex items-center gap-2 text-slate-900">
                 <Layers className="w-4 h-4 text-red-600 group-hover/ladder:rotate-12 transition-transform" />
-                连板梯队 & Alpha 背离 (Board Ladder v29.6)
+                连板梯队与晋级样本
             </div>
             <div className="flex items-center gap-3">
                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total: {totalLimitUps}</div>
@@ -92,8 +92,6 @@ export const LimitLadder: React.FC<Props> = ({ stocks, marketTemp = 50 }) => {
                 {ladder.map((tier, idx) => {
                     const TierIcon = tier.icon;
                     const promoRate = calculatePromoRate(tier.data.promoted.length, tier.data.failed.length);
-                    const alphaValue = tier.alpha; // Alpha momentum index
-
                     return (
                         <div key={tier.tier} className="p-6 hover:bg-slate-50/80 transition-all flex flex-col md:flex-row md:items-center gap-6 group/tier relative">
                             {/* Failure indicator background for the tier */}
@@ -115,9 +113,9 @@ export const LimitLadder: React.FC<Props> = ({ stocks, marketTemp = 50 }) => {
                                             晋级率: <span className={cn(promoRate > 50 ? "text-green-600" : "text-red-600")}>{promoRate}%</span>
                                         </div>
                                         <div className="flex items-center gap-1.5">
-                                            <span className="text-[8px] font-black text-slate-400 uppercase">Alpha:</span>
+                                            <span className="text-[8px] font-black text-slate-400 uppercase">晋级样本率:</span>
                                             <div className="h-1 w-12 bg-slate-200 rounded-full overflow-hidden">
-                                                <div className="h-full bg-red-500" style={{ width: `${alphaValue}%` }} />
+                                                <div className="h-full bg-red-500" style={{ width: `${promoRate}%` }} />
                                             </div>
                                         </div>
                                     </div>
@@ -161,15 +159,15 @@ export const LimitLadder: React.FC<Props> = ({ stocks, marketTemp = 50 }) => {
                                             <div className="grid grid-cols-2 gap-2 mb-2">
                                                 <div className="bg-white/5 p-1 rounded-lg">
                                                     <div className="text-[7px] text-white/30 uppercase font-black">分时能量</div>
-                                                    <div className="text-[9px] font-black text-white">{(stock.volumeRatio || 1.2).toFixed(1)}x</div>
+                                                    <div className="text-[9px] font-black text-white">{stock.volumeRatio !== undefined ? `${stock.volumeRatio.toFixed(1)}x` : '--'}</div>
                                                 </div>
                                                 <div className="bg-white/5 p-1 rounded-lg">
                                                     <div className="text-[7px] text-white/30 uppercase font-black">换手博弈</div>
-                                                    <div className="text-[9px] font-black text-white">{(stock.turnoverRate || 5.2).toFixed(1)}%</div>
+                                                    <div className="text-[9px] font-black text-white">{stock.turnoverRate !== undefined ? `${stock.turnoverRate.toFixed(1)}%` : '--'}</div>
                                                 </div>
                                             </div>
                                             <p className="text-[8px] font-medium leading-relaxed italic text-slate-400 border-t border-white/5 pt-2">
-                                                {stock.notes || "封板坚决，具备较强溢价预期，关注次日竞价强度。"}
+                                                {stock.notes || "暂无可核验备注，等待行情与连板数据补全。"}
                                             </p>
                                         </div>
                                     </div>
@@ -217,9 +215,9 @@ export const LimitLadder: React.FC<Props> = ({ stocks, marketTemp = 50 }) => {
                   </span>
               </div>
           </div>
-          <button className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-xl text-[10px] font-black uppercase tracking-widest border border-white/10 transition-all">
-              同步全场数据
-          </button>
+          <span className="px-4 py-2 bg-white/5 text-white/60 rounded-xl text-[10px] font-black tracking-widest border border-white/10">
+              随行情自动更新
+          </span>
       </div>
     </Card>
   );

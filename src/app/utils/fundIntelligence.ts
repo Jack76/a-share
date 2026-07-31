@@ -1,5 +1,4 @@
-import { Stock } from '../types';
-import { getDirectLargeOrderNetYuan } from './capitalFlow';
+import type { Stock } from '../types.ts';
 
 // V15.0 FUND PANTHEON: 12 Types of Market Participants
 export type FundType = 
@@ -26,7 +25,6 @@ export interface FundBehaviorProfile {
     supportCapability: number; // 0-100
     riskDescription: string;
     tacticalAdvice: string;
-    historicalWinRate?: string;
     icon?: string; // For UI display
 }
 
@@ -45,7 +43,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 100,
         riskDescription: '为了控制指数可能会压盘，但绝不恶意砸盘',
         tacticalAdvice: '【跟随】G队进场意味着政策底。跟随大资金做ETF或权重股，安全第一。',
-        historicalWinRate: '99% (无限子弹)',
         icon: '🛡️'
     },
     'Northbound': {
@@ -57,7 +54,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 70,
         riskDescription: '受汇率和全球市场影响大，流出时会对核心资产造成抛压',
         tacticalAdvice: '【趋势】北向偏好业绩白马。沿 20日线 低吸，破位止损。',
-        historicalWinRate: '60%',
         icon: '🌏'
     },
     'MutualFund': {
@@ -69,7 +65,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 85,
         riskDescription: '调仓缓慢，但一旦趋势坏了会持续阴跌（赎回潮）',
         tacticalAdvice: '【配置】适合中长线。机构票不追高，只在关键均线支撑处低吸。',
-        historicalWinRate: '55%',
         icon: '🏦'
     },
 
@@ -83,7 +78,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 95,
         riskDescription: '高位一致转分歧时波动剧烈',
         tacticalAdvice: '【突击】顶级游资点火，格局极大。只在断板或逻辑证伪时离场，不要轻易下车。',
-        historicalWinRate: '85%+',
         icon: '👑'
     },
     'Alliance': {
@@ -95,7 +89,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 90,
         riskDescription: '资金体量太大，出货时容易造成拥堵',
         tacticalAdvice: '【跟随】盟主进场通常不仅是套利，而是发动一波行情。可积极跟随。',
-        historicalWinRate: '75%',
         icon: '⚔️'
     },
     'TrendRider': {
@@ -107,7 +100,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 80,
         riskDescription: '相对稳健，很少核按钮',
         tacticalAdvice: '【锁仓】方新侠在场，说明个股进入主升浪阶段。可多拿一会。',
-        historicalWinRate: '70%',
         icon: '🌊'
     },
 
@@ -121,7 +113,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 10,
         riskDescription: '次日竞价即巅峰，开盘无差别核按钮，不仅不护盘还抢跑',
         tacticalAdvice: '【快跑】遇到佛山系独食板，次日竞价不涨停直接走，一秒都别留。',
-        historicalWinRate: '80% (吃独食)',
         icon: '🗡️'
     },
     'Scythe': {
@@ -133,7 +124,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 20,
         riskDescription: '擅长在情绪高潮时反手做空，破坏市场合力',
         tacticalAdvice: '【警惕】上塘路在场，必须时刻准备跑路。不要对其抱有格局幻想。',
-        historicalWinRate: '70%',
         icon: '☠️'
     },
     'Viper': {
@@ -145,7 +135,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 60,
         riskDescription: '通道党，散户买不进，买进就是接盘',
         tacticalAdvice: '【观察】养家老师的心法主要是情绪。若他锁仓，可博弈弱转强。',
-        historicalWinRate: '80%',
         icon: '🧠'
     },
 
@@ -159,7 +148,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 30,
         riskDescription: '助涨助跌，早盘集中砸盘，触发止损线集体踩踏',
         tacticalAdvice: '【低吸】严禁追高量化票。等它们砸完出现深坑后再低吸。',
-        historicalWinRate: '60%',
         icon: '🤖'
     },
     'Syndicate': {
@@ -171,7 +159,6 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 50,
         riskDescription: '闪崩风险，流动性枯竭',
         tacticalAdvice: '【规避】看不懂的操盘手法，建议远离。',
-        historicalWinRate: 'Unknown',
         icon: '🐊'
     },
     'Retail': {
@@ -183,8 +170,18 @@ const FUND_PROFILES: Record<string, FundBehaviorProfile> = {
         supportCapability: 10,
         riskDescription: '羊群效应，踩踏',
         tacticalAdvice: '【博弈】拉萨榜意味着人气高但筹码烂。适合做T，不适合锁仓。',
-        historicalWinRate: '<40%',
         icon: '🌱'
+    },
+    'Mixed': {
+        type: 'Mixed',
+        name: '未识别资金',
+        style: '证据不足',
+        holdingPeriod: 'Short',
+        smashProbability: 50,
+        supportCapability: 50,
+        riskDescription: '没有可核验的龙虎榜席位证据，不能识别参与者身份',
+        tacticalAdvice: '仅依据价格、成交和明确的数据源进行判断，不推测资金身份。',
+        icon: '◌'
     }
 };
 
@@ -242,34 +239,20 @@ const SEAT_MAPPING: Record<string, string> = {
  * 资金身份推演引擎 (V15.1 Robust Edition)
  * 增加容错机制，处理缺失的市值/成交额数据
  */
-export const detectFundIdentity = (stock: Stock): { profile: FundBehaviorProfile, detectedName: string } => {
-    const notes = stock.notes || '';
-    const name = stock.name || '';
-    const currentPrice = stock.currentPrice || 0;
-    const volume = stock.volume || 0;
-    const turnoverRate = stock.turnoverRate || 0;
-    
-    // 1. Estimate Data if Missing (Robustness)
-    // 修正：stock.turnover 通常单位为“万”，转换为“元”
-    let turnoverAmount = 0;
-    if (stock.turnover) {
-        turnoverAmount = stock.turnover * 10000;
-    } else {
-        // 如果没有成交额数据，用 成交量(手) * 100 * 价格 估算
-        turnoverAmount = volume * 100 * currentPrice;
-    }
-    
-    // Estimate Market Cap (Float)
-    let mktCap = stock.marketValue || 0;
-    if (mktCap === 0 && turnoverRate > 0 && turnoverAmount > 0) {
-        // TurnoverRate = TurnoverAmount / MarketCap * 100
-        // MarketCap = TurnoverAmount / (TurnoverRate / 100)
-        mktCap = turnoverAmount / (turnoverRate / 100);
-    }
+export const detectFundIdentity = (stock: Stock): {
+    profile: FundBehaviorProfile;
+    detectedName: string;
+    evidence: 'DIRECT_SEAT' | 'UNAVAILABLE';
+} => {
+    const verifiedSeatNames = (stock.dragonTigerBoard || []).flatMap(board => [
+        ...board.buySeats.map(seat => seat.name),
+        ...board.sellSeats.map(seat => seat.name),
+    ]);
 
-    // 2. 席位精确匹配 (Seat Matching) - Highest Priority
+    // 只有明确的龙虎榜席位名称才允许套用行为画像；不再根据股票名称、
+    // 市值、成交额、角色或标签猜测“国家队/游资/公募”等参与者身份。
     for (const [key, val] of Object.entries(SEAT_MAPPING)) {
-        if (notes.includes(key)) {
+        if (verifiedSeatNames.some(name => name.includes(key))) {
             // Mapping Logic
             let profileKey = 'Retail';
             switch (val) {
@@ -283,80 +266,27 @@ export const detectFundIdentity = (stock: Stock): { profile: FundBehaviorProfile
                 case 'Viper': profileKey = 'Viper'; break;
                 case 'Retail': profileKey = 'Retail'; break;
             }
-            return { profile: FUND_PROFILES[profileKey], detectedName: key };
+            return { profile: FUND_PROFILES[profileKey], detectedName: key, evidence: 'DIRECT_SEAT' };
         }
     }
-
-    // 3. 行为特征识别 (Behavior Profiling)
-
-    // A. G-Force: 权重股 + 逆势 (or Bank/Securities)
-    // 80 Billion check or Name check
-    const isWeightStock = mktCap > 80000000000 || (name.startsWith('中') && !name.includes('中小')) || notes.includes('银行') || notes.includes('证券') || notes.includes('保险');
-    if (isWeightStock && turnoverAmount > 500000000) {
-        return { profile: FUND_PROFILES['NationalTeam'], detectedName: 'G队/权重' };
-    }
-
-    // B. DMA Quant: 微盘 + 高换手
-    // < 5 Billion or Name check (ST? / 300?)
-    const isMicroCap = (mktCap > 0 && mktCap < 5000000000) || (stock.code && stock.code.startsWith('300') && turnoverRate > 10);
-    const isHighTurnover = turnoverRate > 15;
-    if (isMicroCap && isHighTurnover && stock.volumeRatio && stock.volumeRatio > 1.8) {
-        return { profile: FUND_PROFILES['DMA_Quant'], detectedName: 'DMA量化' };
-    }
-
-    // C. Apex Hot Money: 大成交 + 连板龙头 (or Dragon Role)
-    if ((turnoverAmount > 2000000000 && stock.role === 'Dragon') || stock.role === 'Dragon') {
-        return { profile: FUND_PROFILES['GrandMaster'], detectedName: '顶级游资(龙头)' };
-    }
-    if (stock.role === 'Leader') {
-        return { profile: FUND_PROFILES['GrandMaster'], detectedName: '领涨游资' };
-    }
-
-    // D. Institution: 机构风格 (大单流入 + 低换手涨停 or Main Role)
-    const largeOrderNetYuan = getDirectLargeOrderNetYuan(stock);
-    if (notes.includes('机构') || (stock.role === 'Main' && turnoverRate < 10) || ((largeOrderNetYuan || 0) > 50_000_000 && turnoverRate < 5)) {
-        return { profile: FUND_PROFILES['MutualFund'], detectedName: '机构/公募' };
-    }
-
-    // E. Syndicate: 庄股 (缩量一字 or Independent Role with weird volume)
-    if ((stock.isLimitUp && turnoverRate < 1) || stock.role === 'Independent') {
-        return { profile: FUND_PROFILES['Syndicate'], detectedName: '强庄/一字' };
-    }
-    
-    // F. Fallback based on Tags
-    if (stock.tags?.includes('HotMoney')) return { profile: FUND_PROFILES['GrandMaster'], detectedName: '活跃游资' };
-    if (stock.tags?.includes('Quant')) return { profile: FUND_PROFILES['DMA_Quant'], detectedName: '量化' };
-
-    // Fallback
-    return { profile: FUND_PROFILES['Retail'], detectedName: '散户/混合' };
+    return { profile: FUND_PROFILES['Mixed'], detectedName: '未识别', evidence: 'UNAVAILABLE' };
 };
 
 /**
  * 砸盘风险预判 (V15.0)
  */
 export const predictSmashRisk = (stock: Stock, marketPhase: string): { riskScore: number, warning: string } => {
-    const { profile, detectedName } = detectFundIdentity(stock);
-    let risk = profile.smashProbability;
-    let warning = `${profile.icon || ''} ${detectedName}: ${profile.riskDescription}`;
-
-    // Environmental Modifiers
-    if (marketPhase === 'Ebb' || marketPhase === 'Ice') { // 退潮/冰点
-        if (['Sniper', 'Scythe', 'DMA_Quant'].includes(profile.type)) {
-            risk = 100;
-            warning = `⚠️【极度危险】退潮期 ${detectedName} 几乎必砸，请立即规避！`;
-        }
-        if (profile.type === 'GrandMaster') {
-            risk += 15; // 顶级游资也会补跌
-        }
-    }
-
-    if (profile.type === 'NationalTeam' && (stock.changePercent || 0) < -2) {
-        risk = 0;
-        warning = '🛡️ G队护盘预期，下跌空间有限';
-    }
+    const { detectedName, evidence } = detectFundIdentity(stock);
+    const phaseRisk = marketPhase === 'Ebb' || marketPhase === 'Ice' ? 15 : 0;
+    const priceRisk = (stock.changePercent || 0) <= -5 ? 15 : (stock.changePercent || 0) <= -2 ? 8 : 0;
+    const trapRisk = Math.max(0, (stock.trapRiskScore || 50) - 50) * 0.35;
+    const risk = 50 + phaseRisk + priceRisk + trapRisk;
+    const warning = evidence === 'DIRECT_SEAT'
+        ? `已核验龙虎榜席位“${detectedName}”。席位名称不直接推导未来砸盘概率；风险分仅由市场阶段、价格与 TrapGuard 指标计算。`
+        : '没有可核验的龙虎榜席位数据，不推测资金身份；风险分仅使用市场阶段、价格与 TrapGuard 指标。';
 
     return { 
-        riskScore: Math.min(100, risk), 
+        riskScore: Math.min(100, Math.round(risk)),
         warning 
     };
 };

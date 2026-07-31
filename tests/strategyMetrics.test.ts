@@ -16,6 +16,14 @@ test('China market clock is deterministic across host timezones', () => {
   assert.equal(isChinaAuctionRelevant('2026-07-23T01:15:00.000Z'), true);
 });
 
+test('China market clock excludes an official weekday market holiday', () => {
+  const clock = getChinaTradingClock('2026-10-02T02:00:00.000Z');
+  assert.equal(clock.tradeDate, '2026-10-02');
+  assert.equal(clock.isHoliday, true);
+  assert.equal(clock.isTradingDay, false);
+  assert.equal(clock.isMarketOpen, false);
+});
+
 test('strategy acceptance metrics include drawdown, calibration and regime evidence', () => {
   const metrics = calculateStrategyAcceptanceMetrics({
     trades: [

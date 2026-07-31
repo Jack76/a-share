@@ -1,7 +1,7 @@
 import { getChinaTradingClock, type MarketTimestamp } from './marketClock.ts';
 
 export type FundReliability = 'LOW' | 'MEDIUM' | 'HIGH';
-export type FundCalibrationStatus = 'UNVALIDATED' | 'LIMITED' | 'OUT_OF_SAMPLE';
+export type FundCalibrationStatus = 'UNVALIDATED' | 'LIMITED' | 'WALK_FORWARD_PROXY';
 export type FundDataStatus = 'FRESH' | 'STALE' | 'UNAVAILABLE';
 
 export interface FundHistoryPoint {
@@ -143,7 +143,7 @@ export const predictFundPriceAction = (
       ? 'MEDIUM'
       : 'LOW';
   const calibrationStatus: FundCalibrationStatus = sampleSize >= 30
-    ? 'OUT_OF_SAMPLE'
+    ? 'WALK_FORWARD_PROXY'
     : sampleSize >= 10
       ? 'LIMITED'
       : 'UNVALIDATED';

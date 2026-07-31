@@ -10,7 +10,7 @@ interface Props {
 }
 
 export const OrderFlowMonitor: React.FC<Props> = ({ stock }) => {
-  // Simulate order flow data based on turnover and volumeRatio
+  // This is an OHLCV/turnover proxy, not exchange Level-2 order flow.
   const buyPressure = Math.min(100, (stock.volumeRatio || 1) * 20 + (stock.changePercent || 0) * 5 + 30);
   const sellPressure = 100 - buyPressure;
 
@@ -23,7 +23,7 @@ export const OrderFlowMonitor: React.FC<Props> = ({ stock }) => {
         <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center justify-between">
             <div className="flex items-center gap-2">
                 <Activity className="w-3.5 h-3.5 text-red-600" />
-                资金流向监控 (Order Flow)
+                量价压力代理（非 L2）
             </div>
             <Badge variant="outline" className="text-[9px] font-mono">{stock.name}</Badge>
         </CardTitle>
@@ -59,7 +59,7 @@ export const OrderFlowMonitor: React.FC<Props> = ({ stock }) => {
         <div className="grid grid-cols-2 gap-4">
             <div className="p-3 rounded-xl bg-red-50/50 border border-red-100 space-y-2">
                 <div className="text-[9px] font-black text-red-600 uppercase tracking-widest flex items-center gap-1">
-                    <Zap className="w-3 h-3" /> 主力大单 (Large)
+                    <Zap className="w-3 h-3" /> 估算买入压力
                 </div>
                 <div className="text-lg font-black font-mono text-red-700 tracking-tighter">
                     {largeOrderBuy}%
@@ -70,7 +70,7 @@ export const OrderFlowMonitor: React.FC<Props> = ({ stock }) => {
             </div>
             <div className="p-3 rounded-xl bg-green-50/50 border border-green-100 space-y-2">
                 <div className="text-[9px] font-black text-green-600 uppercase tracking-widest flex items-center gap-1">
-                    <ChevronRight className="w-3 h-3" /> 散户跟风 (Retail)
+                    <ChevronRight className="w-3 h-3" /> 估算卖出压力
                 </div>
                 <div className="text-lg font-black font-mono text-green-700 tracking-tighter">
                     {largeOrderSell}%
@@ -81,15 +81,15 @@ export const OrderFlowMonitor: React.FC<Props> = ({ stock }) => {
             </div>
         </div>
 
-        {/* AI Insight */}
+        {/* Rule-based proxy interpretation */}
         <div className="p-3 rounded-xl bg-slate-900 text-white space-y-2">
             <h5 className="text-[9px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
-                <ShieldCheck className="w-3 h-3 text-red-500" /> AI Flow Analysis
+                <ShieldCheck className="w-3 h-3 text-red-500" /> 规则解读
             </h5>
             <p className="text-[10px] font-medium leading-relaxed text-slate-300 italic">
-                {buyPressure > 65 ? "主力资金持续抢筹，封板意愿强烈，注意炸板回补机会。" : 
-                 buyPressure < 35 ? "资金流出显著，属于派发期，切勿盲目接盘。" : 
-                 "处于分歧博弈期，需关注后续量能能否持续放大。"}
+                {buyPressure > 65 ? "量价代理偏多，需用供应商大单净额或后续成交确认。" :
+                 buyPressure < 35 ? "量价代理偏空，优先检查风险与退出条件。" :
+                 "量价代理中性，等待成交量与价格方向进一步确认。"}
             </p>
         </div>
       </CardContent>

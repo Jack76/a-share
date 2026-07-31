@@ -27,6 +27,7 @@ import { StockMobileCard } from './StockMobileCard';
 import { PRESET_THEMES } from '../../data/presetStocks';
 import { isActionableBullishPrediction } from '../../utils/predictionCalibration';
 import { assessCapitalFlow, getDirectLargeOrderNetYuan } from '../../utils/capitalFlow';
+import { sanitizeAdvisoryLanguage } from '../../utils/advisoryLanguage';
 
 // V65.0: analyzeIntradayStructure now runs in Store pipeline, DragonPool reads pre-computed stock.intradayIndicators
 
@@ -42,7 +43,11 @@ export const DragonPool: React.FC = () => {
   //      (3) only process key stocks, (4) wider diff threshold (>3 not >1)
   const velocityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stocksRefLocal = useRef(stocks);
+  const analyzeLiveStockSignalRef = useRef(analyzeLiveStockSignal);
+  const updateStocksRef = useRef(updateStocks);
   stocksRefLocal.current = stocks;
+  analyzeLiveStockSignalRef.current = analyzeLiveStockSignal;
+  updateStocksRef.current = updateStocks;
 
   useEffect(() => {
     const runVelocityPass = () => {
@@ -87,7 +92,7 @@ export const DragonPool: React.FC = () => {
           isHeavyVolume: intraday?.volumeStructure?.isHeavy || false,
         };
 
-        const signal = analyzeLiveStockSignal(stock, currentVelocity, microContext);
+        const signal = analyzeLiveStockSignalRef.current(stock, currentVelocity, microContext);
 
         const oldScore = stock.stargate?.score || 0;
         const newScore = signal.stargate?.score || 0;
@@ -101,9 +106,9 @@ export const DragonPool: React.FC = () => {
             changes: {
               aiPrediction: {
                 trend: signal.trend,
-                summary: signal.summary,
-                strategy: signal.strategy,
-                positionAdvice: signal.positionAdvice,
+                summary: sanitizeAdvisoryLanguage(signal.summary),
+                strategy: sanitizeAdvisoryLanguage(signal.strategy),
+                positionAdvice: sanitizeAdvisoryLanguage(signal.positionAdvice),
                 winRate: signal.prediction?.probability || 50,
                 buyPoint: `¥${signal.buyPoint.toFixed(2)}`,
                 sellPoint: `¥${signal.sellPoint.toFixed(2)}`,
@@ -118,7 +123,7 @@ export const DragonPool: React.FC = () => {
       });
 
       if (pendingUpdates.length > 0) {
-        updateStocks(pendingUpdates, false); // V65.1: Skip recalc, signals already computed
+        updateStocksRef.current(pendingUpdates, false); // V65.1: Skip recalc, signals already computed
       }
     };
 
@@ -287,7 +292,12 @@ export const DragonPool: React.FC = () => {
   };
 
   const sortedStocks = useMemo(() => {
-    let sortableItems = [...stocks];
+    let sortableItems = Array.from(
+      new Map<string, Stock>(stocks.map(stock => [
+        stock.code.replace(/^(sh|sz|bj)/i, ''),
+        stock,
+      ])).values(),
+    );
 
     // Filter Logic
     if (filterText) {
@@ -650,7 +660,7 @@ export const DragonPool: React.FC = () => {
       case 'Substitute': return <Badge className="bg-blue-500 font-bold shadow-sm shadow-blue-200">中位补涨</Badge>;
       case 'Independent': return <Badge className="bg-purple-600 font-bold shadow-sm shadow-purple-200">独立妖股</Badge>;
       case 'Main': return <Badge className="bg-emerald-600 font-bold shadow-sm shadow-emerald-200">中军容量</Badge>;
-      case 'Follower': return <Badge className="bg-slate-500 font-bold">跟风杂毛</Badge>;
+      case 'Follower': return <Badge className="bg-slate-500 font-bold">后排跟随</Badge>;
       case 'Potential': return <Badge variant="outline" className="border-dashed border-slate-300 text-slate-500 font-bold">潜力潜伏</Badge>;
       default: return <Badge variant="outline" className="text-slate-400">普通观察</Badge>;
     }
@@ -774,9 +784,9 @@ export const DragonPool: React.FC = () => {
                             trapSignals: trapAnalysis.signals,
                             aiPrediction: {
                                 trend: signal.trend,
-                                summary: signal.summary,
-                                strategy: signal.strategy,
-                                positionAdvice: signal.positionAdvice,
+                                summary: sanitizeAdvisoryLanguage(signal.summary),
+                                strategy: sanitizeAdvisoryLanguage(signal.strategy),
+                                positionAdvice: sanitizeAdvisoryLanguage(signal.positionAdvice),
                                 winRate: signal.prediction?.probability || 50,
                                 prediction: signal.prediction,
                                 smartEntry: signal.smartEntry,
@@ -820,16 +830,18 @@ export const DragonPool: React.FC = () => {
                 </div>
             )}
           </div>
-          <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.3em] truncate max-w-[300px] md:max-w-none">Quantum Strategy Engine v8.5 | High-Frequency Awareness</p>
+          <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] md:tracking-[0.3em] truncate max-w-[300px] md:max-w-none">规则策略引擎 v8.5 · 数据可靠度优先</p>
         </div>
         
-        <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto">
+        <div className="flex items-center gap-2 md:gap-3 w-full xl:w-auto">
            {/* Auto-Discovery Toggle */}
            <div className="flex items-center gap-2">
                <Button 
                    variant="outline" 
                    size="sm" 
                    onClick={() => setShowAutoDiscovered(!showAutoDiscovered)} 
+                   aria-label={showAutoDiscovered ? '隐藏全市场扫描结果' : '显示全市场扫描结果'}
+                   title={showAutoDiscovered ? '隐藏全市场扫描结果' : '显示全市场扫描结果'}
                    className={cn(
                        "h-10 px-3 rounded-xl border-slate-200 text-[10px] font-black uppercase tracking-widest gap-2 transition-all", 
                        showAutoDiscovered ? "bg-red-50 text-red-600 border-red-200 shadow-sm shadow-red-100" : "text-slate-400 hover:text-slate-600"
@@ -840,12 +852,14 @@ export const DragonPool: React.FC = () => {
                </Button>
            </div>
 
-           <div className="flex gap-2 ml-auto xl:ml-0 flex-1 justify-end">
+           <div className="flex gap-2 ml-auto xl:ml-0 flex-none justify-end">
                {/* Mobile View Toggle */}
                <Button 
                    variant="outline" 
                    className="h-10 w-10 md:hidden rounded-xl border-slate-200 text-slate-500"
                    onClick={() => setViewMode(prev => prev === 'table' ? 'card' : 'table')}
+                   aria-label={viewMode === 'table' ? '切换为卡片视图' : '切换为表格视图'}
+                   title={viewMode === 'table' ? '切换为卡片视图' : '切换为表格视图'}
                >
                    {viewMode === 'table' ? <AlignJustify className="w-4 h-4" /> : <LayoutList className="w-4 h-4" />}
                </Button>
@@ -856,13 +870,15 @@ export const DragonPool: React.FC = () => {
                  className="h-10 md:h-12 w-10 md:w-auto px-0 md:px-6 rounded-xl md:rounded-2xl font-black border-slate-200 hover:bg-slate-50 text-[10px] uppercase tracking-widest shrink-0" 
                  onClick={handleManualRefresh} 
                  disabled={isManualRefreshing}
+                 aria-label="手动刷新行情"
+                 title="手动刷新行情"
                >
                  <RefreshCw className={cn("w-4 h-4 md:mr-2 text-slate-600", isManualRefreshing && "animate-spin")} />
                  <span className="hidden md:inline">手动刷新</span>
                </Button>
                <Button variant="outline" className="h-10 md:h-12 px-3 md:px-6 rounded-xl md:rounded-2xl font-black border-slate-200 hover:bg-slate-50 text-[10px] uppercase tracking-widest shrink-0" onClick={handleScanAndAdd} disabled={isScanning}>
                  <Sparkles className={`w-4 h-4 mr-1 md:mr-2 text-red-600 ${isScanning ? 'animate-spin' : ''}`} />
-                 {isScanning ? '挖掘...' : 'AI 挖掘'}
+                 {isScanning ? '扫描中...' : '规则扫描'}
                </Button>
                <Button variant="default" className="h-10 md:h-12 px-3 md:px-6 rounded-xl md:rounded-2xl font-black shadow-xl shadow-red-600/20 bg-red-600 hover:bg-red-700 text-[10px] uppercase tracking-widest italic shrink-0" onClick={() => setIsOpen(true)}>
                 <Plus className="w-4 h-4 mr-1 md:mr-2" />
@@ -875,7 +891,7 @@ export const DragonPool: React.FC = () => {
       {/* Search & Filters Bar */}
       <div className="flex flex-col gap-4">
          {/* Sector Tags Filter */}
-         <div className="flex flex-wrap gap-2">
+         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
             <Button 
                 variant={filterConcept === 'All' && !showSelfSelectOnly ? "default" : "outline"}
                 size="sm"
@@ -883,7 +899,7 @@ export const DragonPool: React.FC = () => {
                     setFilterConcept('All');
                     setShowSelfSelectOnly(false);
                 }}
-                className="text-[11px] font-bold h-7 rounded-full"
+                className="text-[11px] font-bold h-7 rounded-full shrink-0"
             >
                 全部
             </Button>
@@ -896,7 +912,7 @@ export const DragonPool: React.FC = () => {
                     if (newState) setFilterConcept('All');
                 }}
                 className={cn(
-                    "text-[11px] font-bold h-7 rounded-full gap-1",
+                    "text-[11px] font-bold h-7 rounded-full gap-1 shrink-0",
                     showSelfSelectOnly ? "bg-yellow-500 hover:bg-yellow-600 text-white border-transparent" : "text-yellow-600 border-yellow-200 bg-yellow-50"
                 )}
             >
@@ -912,7 +928,7 @@ export const DragonPool: React.FC = () => {
                         setShowSelfSelectOnly(false);
                     }}
                     className={cn(
-                        "text-[11px] font-bold h-7 rounded-full border-dashed border-slate-300",
+                        "text-[11px] font-bold h-7 rounded-full border-dashed border-slate-300 shrink-0",
                         filterConcept === theme.name && "border-solid border-transparent bg-slate-900 text-white"
                     )}
                 >
@@ -945,7 +961,7 @@ export const DragonPool: React.FC = () => {
                         <SelectItem value="Substitute">中位补涨</SelectItem>
                         <SelectItem value="Independent">独立妖股</SelectItem>
                         <SelectItem value="Main">中军容量</SelectItem>
-                        <SelectItem value="Follower">跟风杂毛</SelectItem>
+                        <SelectItem value="Follower">后排跟随</SelectItem>
                         <SelectItem value="Potential">潜力潜伏</SelectItem>
                     </SelectContent>
                 </Select>
@@ -964,7 +980,7 @@ export const DragonPool: React.FC = () => {
 
                 <Select value={filterSignal} onValueChange={setFilterSignal}>
                     <SelectTrigger className="w-[90px] h-10 rounded-xl border-slate-200 text-[10px] font-bold uppercase tracking-wider bg-white shadow-sm">
-                        <SelectValue placeholder="预判" />
+                        <SelectValue placeholder="信号" />
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem value="All">所有信号</SelectItem>
@@ -1009,7 +1025,7 @@ export const DragonPool: React.FC = () => {
         </span>
         <span><b className="text-slate-700">个股</b>＝K线与技术指标完整度</span>
         <span><b className="text-slate-700">市场</b>＝全市场宽度覆盖状态</span>
-        <span><b className="text-slate-700">证据</b>＝非重叠滚动验证样本</span>
+        <span><b className="text-slate-700">证据</b>＝非重叠滚动代理样本；规则信心不是上涨概率</span>
         <span><b className="text-slate-700">大单净额</b>＝供应商大单口径；量价压力仅用于方向校验</span>
       </div>
 
@@ -1018,7 +1034,7 @@ export const DragonPool: React.FC = () => {
         <div className="md:hidden space-y-4">
             {sortedStocks.map((stock) => (
                 <StockMobileCard 
-                    key={stock.id} 
+                    key={stock.code.replace(/^(sh|sz|bj)/i, '')}
                     stock={stock} 
                     phase={phase}
                     onEdit={handleEdit} 
@@ -1046,7 +1062,7 @@ export const DragonPool: React.FC = () => {
                     <div className="flex items-center">涨跌 {getSortIcon('changePercent')}</div>
                 </TableHead>
                 <TableHead onClick={() => requestSort('prediction')} className="cursor-pointer py-3 md:py-5 text-[10px] font-bold uppercase tracking-widest px-1 md:px-4">
-                    <div className="flex items-center">AI 预判 {getSortIcon('prediction')}</div>
+                    <div className="flex items-center">规则信号 {getSortIcon('prediction')}</div>
                 </TableHead>
                 <TableHead onClick={() => requestSort('quality')} className="cursor-pointer py-3 md:py-5 text-[10px] font-bold uppercase tracking-widest px-1 md:px-4">
                     <div className="flex items-center">品质 {getSortIcon('quality')}</div>
@@ -1067,7 +1083,7 @@ export const DragonPool: React.FC = () => {
             <TableBody>
               {sortedStocks.map((stock) => (
                 <StockTableRow 
-                    key={stock.id} 
+                    key={stock.code.replace(/^(sh|sz|bj)/i, '')}
                     stock={stock} 
                     phase={phase}
                     onEdit={handleEdit} 
@@ -1161,7 +1177,7 @@ export const DragonPool: React.FC = () => {
                     <SelectItem value="Substitute">中位补涨</SelectItem>
                     <SelectItem value="Independent">独立妖股</SelectItem>
                     <SelectItem value="Main">中军容量</SelectItem>
-                    <SelectItem value="Follower">跟风杂毛</SelectItem>
+                    <SelectItem value="Follower">后排跟随</SelectItem>
                     <SelectItem value="Potential">潜力潜伏</SelectItem>
                     <SelectItem value="Normal">普通观察</SelectItem>
                   </SelectContent>

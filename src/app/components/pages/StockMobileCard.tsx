@@ -235,7 +235,7 @@ export const StockMobileCard: React.FC<StockMobileCardProps> = ({
                       className="text-[8px] font-mono text-slate-400"
                       title={stock.aiPrediction.prediction.warnings?.join('\n')}
                     >
-                      {stock.aiPrediction.prediction.probability}% · 个股{stock.aiPrediction.prediction.dataReliability === 'HIGH' ? '高' : stock.aiPrediction.prediction.dataReliability === 'MEDIUM' ? '中' : '低'} · 市场{stock.aiPrediction.prediction.marketDataStatus === 'FRESH' ? '完整' : stock.aiPrediction.prediction.marketDataStatus === 'PARTIAL' ? '部分' : stock.aiPrediction.prediction.marketDataStatus === 'STALE' ? '过期' : '缺失'} · 证据{stock.aiPrediction.prediction.sampleSize || 0}笔
+                      规则信心{stock.aiPrediction.prediction.probability}% · 个股{stock.aiPrediction.prediction.dataReliability === 'HIGH' ? '高' : stock.aiPrediction.prediction.dataReliability === 'MEDIUM' ? '中' : '低'} · 市场{stock.aiPrediction.prediction.marketDataStatus === 'FRESH' ? '完整' : stock.aiPrediction.prediction.marketDataStatus === 'PARTIAL' ? '部分' : stock.aiPrediction.prediction.marketDataStatus === 'STALE' ? '过期' : '缺失'} · 滚动证据{stock.aiPrediction.prediction.sampleSize || 0}笔 · 行情{stock.sourceAsOf ? new Date(stock.sourceAsOf).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' }) : '未标注'}
                     </span>
                  </div>
              )}

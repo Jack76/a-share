@@ -69,8 +69,8 @@ export const TrapGuard: React.FC<Props> = ({ stocks }) => {
                 </div>
             </div>
             <div className="space-y-1">
-                <p className="text-[11px] text-slate-900 font-black uppercase tracking-[0.2em]">主力和弦算法监控中</p>
-                <p className="text-[9px] text-slate-400 font-medium tracking-wider">未发现异常筹码派发或逆向诱多行为</p>
+                <p className="text-[11px] text-slate-900 font-black uppercase tracking-[0.2em]">量价风险规则监控中</p>
+                <p className="text-[9px] text-slate-400 font-medium tracking-wider">暂未发现达到阈值的派发或诱多风险特征</p>
             </div>
           </div>
         ) : (
@@ -175,7 +175,7 @@ export const TrapGuard: React.FC<Props> = ({ stocks }) => {
           <div className="flex items-center gap-3">
               <div className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/70">
-                主力和弦算法监测中: 筹码派发 · 逆向诱多 · 缩量顶
+                量价风险规则监测中：筹码派发 · 逆向诱多 · 缩量顶
               </span>
           </div>
           <ArrowRight className="w-4 h-4 text-white/30" />

@@ -248,21 +248,21 @@ export const TimeSharingDivergence: React.FC<Props> = ({ stock, height = 300 }) 
                 <p className="text-[11px] font-bold text-slate-700 leading-relaxed italic">
                     {/* V67.2: Main signal override — when predatorEngine says SELL/TRAP, trend assessment must not contradict */}
                     {mainSignalOverride && stats.divergence > 5 ?
-                        `信号仲裁 (Alpha: +${stats.divergence.toFixed(1)})：虽然 Alpha 数值为正，但主引擎多维度分析已判定【${mainSummary.slice(0, 20)}】。Alpha 正值可能是主力对倒拉升制造的"资金假象"，用于吸引跟风盘接货。以主信号为准，切勿被单一指标误导。` :
+                        `信号冲突 (Alpha: +${stats.divergence.toFixed(1)})：量价代理偏正，但风险引擎判定【${mainSummary.slice(0, 20)}】。单一指标不足以覆盖退出信号，优先执行风控条件。` :
                      mainSignalOverride && stats.divergence > 0 ?
-                        `信号仲裁 (Alpha: +${stats.divergence.toFixed(1)})：Alpha 微正但主引擎检测到出货特征【${mainSummary.slice(0, 20)}】。量价表面健康不代表安全，主力常在出货末期维持正向 Alpha 掩护撤退。以主信号为准。` :
+                        `信号冲突 (Alpha: +${stats.divergence.toFixed(1)})：量价代理微正，但风险引擎检测到【${mainSummary.slice(0, 20)}】。量价表面健康不代表风险解除。` :
                      stock.isThemeDropout ?
                         `逆势警报 (Alpha 失效)：${stats.divergence > 0 ? "尽管资金动能强劲" : "资金随板块同步流出"} (Alpha: ${stats.divergence > 0 ? "+" : ""}${stats.divergence.toFixed(1)})，受板块退潮拖累，谨防补跌风险。` :
                      stats.divergence < -15 ? 
                         (stats.priceChg > 0 ?
-                            `检测到严重的趋势背离 (Alpha: ${stats.divergence.toFixed(1)})：股价推高但成交量能显著萎缩，显示主力正在进行诱多派发。` :
+                            `检测到严重的趋势背离 (Alpha: ${stats.divergence.toFixed(1)})：股价推高但成交量能显著萎缩，存在诱多或派发风险。` :
                             `趋势极度疲弱 (Alpha: ${stats.divergence.toFixed(1)})：股价下跌且缺乏资金承接，呈无抵抗阴跌态势。`) :
                      stats.divergence < -5 ?
                         `趋势轻微背离 (Alpha: ${stats.divergence.toFixed(1)})：股价上涨动能略快于资金支持，虽未触发系统性风险，但需警惕冲高回落。` :
                      stats.divergence > 5 ?
                         (stats.priceChg < 0 ? 
                             `量价底背离迹象明显 (Alpha: +${stats.divergence.toFixed(1)})：股价下跌但资金承接有力，筹码正在低位沉淀，有望迎来修复性反弹。` :
-                            `资金动能强劲 (Alpha: +${stats.divergence.toFixed(1)})：情绪指数领涨股价，显示主力资金正在积极推升，趋势大概率延续。`) :
+                            `量价动能偏强 (Alpha: +${stats.divergence.toFixed(1)})：情绪代理领先价格，但仍需后续成交与风险规则确认。`) :
                         "当前量价关系相对健康，情绪指数与价格走势基本同步，未发现严重的系统性背离风险。"}
                 </p>
             </div>
@@ -273,7 +273,7 @@ export const TimeSharingDivergence: React.FC<Props> = ({ stock, height = 300 }) 
                 <TrendingUp className="w-4 h-4" />
             </div>
             <div>
-                <div className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">背离量化指标 (Alpha)</div>
+                <div className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">量价背离代理 (Alpha)</div>
                 <div className="flex items-center gap-3 mt-1">
                     <div className="flex flex-col">
                         <span className={cn("text-[14px] font-black", stats.divergence < 0 ? "text-red-600" : "text-emerald-600")}>

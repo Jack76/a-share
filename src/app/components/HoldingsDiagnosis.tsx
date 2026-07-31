@@ -176,12 +176,12 @@ export const HoldingsDiagnosis: React.FC = () => {
         message = isStargate ? "【星门】维度加速中" : "【锁仓】强势封板中";
         action = "主升浪加速态，暂不建议分批止盈，建议锁仓持股";
     }
-    // 5. AI Target Exit (Priority: Medium)
+    // 5. Rule target exit (Priority: Medium)
     else if (sellTarget > 0 && current >= sellTarget) {
         if (profit > 0) {
             level = 'Success';
             message = "【止盈】到达目标位";
-            action = "AI 目标达成，建议分批兑现";
+            action = "规则目标达成，建议分批兑现";
         } else {
             level = 'Warning'; 
             message = "【反抽】到达压力位";
@@ -226,7 +226,7 @@ export const HoldingsDiagnosis: React.FC = () => {
         action = "只看不动，让利润奔跑";
     } else {
         message = "【洗盘】良性分歧";
-        action = "主力控盘，持筹不动";
+        action = "低换手锁仓特征，持有并紧盯退出条件";
     }
 
     return { level, message, action, profit, distToStop, profitFromStop, distToTarget, sellTarget };
@@ -237,7 +237,7 @@ export const HoldingsDiagnosis: React.FC = () => {
       <Card className="bg-muted/30">
         <CardContent className="p-8 text-center text-muted-foreground italic flex flex-col items-center gap-2">
             <BrainCircuit className="w-12 h-12 opacity-20" />
-            当前账户无持仓，AI 诊断模块待命中...
+            当前账户无持仓，规则诊断模块待命中...
         </CardContent>
       </Card>
     );

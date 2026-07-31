@@ -20,8 +20,6 @@ import {
   PieChart,
   CircleCheck,
   CircleAlert,
-  Cloud,
-  CloudOff,
   Database,
   HardDrive,
   RefreshCw,
@@ -33,6 +31,7 @@ import { cn } from './components/ui/utils';
 import { BlackSwanOverlay } from './components/BlackSwanOverlay';
 import { deriveMarketHealth } from './utils/dataHealth';
 import { getPageFromSearch, getPageUrl, type PageId } from './utils/pageNavigation';
+import { getChinaTradingClock } from './utils/marketClock';
 
 export default function App() {
   const [activeTab, setActiveTabState] = useState<PageId>(() => getPageFromSearch(window.location.search));
@@ -75,8 +74,6 @@ type AppInnerProps = {
 
 const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: AppInnerProps) => {
   const {
-    connectionStatus,
-    isSaving,
     localSaveStatus,
     phase,
     metrics,
@@ -88,17 +85,15 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: AppI
   } = useTrading();
   
   const getMarketStatus = () => {
-    const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    const day = now.getDay();
-    
-    if (day === 0 || day === 6) return { text: "周末休市", color: "text-slate-500" };
-    
-    const time = hour * 100 + minute;
-    if (time >= 915 && time <= 1130) return { text: "上午交易中", color: "text-green-600 font-bold" };
+    const clock = getChinaTradingClock();
+    if (clock.isHoliday) return { text: "节假日休市", color: "text-slate-500" };
+    if (!clock.isTradingDay) return { text: "周末休市", color: "text-slate-500" };
+
+    const time = clock.timeValue;
+    if (time >= 915 && time < 930) return { text: "集合竞价", color: "text-orange-500 font-bold" };
+    if (time >= 930 && time <= 1130) return { text: "上午交易中", color: "text-green-600 font-bold" };
     if (time >= 1300 && time <= 1500) return { text: "下午交易中", color: "text-green-600 font-bold" };
-    if (time >= 900 && time < 915) return { text: "集合竞价", color: "text-orange-500 font-bold" };
+    if (time >= 900 && time < 915) return { text: "开盘前", color: "text-slate-500" };
     if (time > 1130 && time < 1300) return { text: "午间休市", color: "text-slate-500" };
     
     return { text: "已休市", color: "text-slate-500" };
@@ -143,13 +138,6 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: AppI
   ];
 
   const activeNavItem = navItems.find(item => item.id === activeTab) || navItems[0];
-  const cloudMeta = isSaving
-    ? { label: '云端备份中', detail: '本机已保存，正在备份到云端', color: 'text-blue-600', dot: 'bg-blue-500', Icon: Loader, spinning: true }
-    : connectionStatus === 'connected'
-      ? { label: '云端已备份', detail: '本机数据已完成云端备份', color: 'text-green-600', dot: 'bg-green-500', Icon: Cloud, spinning: false }
-      : connectionStatus === 'connecting'
-        ? { label: '云端连接中', detail: '本机数据可用，正在连接云端备份', color: 'text-amber-600', dot: 'bg-amber-500', Icon: Loader, spinning: true }
-        : { label: '仅本机保存', detail: '云端备份不可用，本机数据仍可正常使用', color: 'text-amber-700', dot: 'bg-amber-500', Icon: CloudOff, spinning: false };
   const marketHealth = deriveMarketHealth({
     refreshStatus: marketRefreshStatus,
     indexCount: marketIndices.length,
@@ -169,7 +157,7 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: AppI
     ? { label: '保存中', detail: '正在写入当前浏览器', color: 'text-blue-700', Icon: Loader, spinning: true }
     : localSaveStatus === 'error'
       ? { label: '保存失败', detail: '浏览器存储空间不足或不可用', color: 'text-red-700', Icon: CircleAlert, spinning: false }
-      : { label: '已保存', detail: '策略、自选与持仓保存在当前浏览器', color: 'text-green-700', Icon: HardDrive, spinning: false };
+      : { label: '仅本机保存', detail: '自选、持仓与复盘只保存在当前浏览器，不会上传云端', color: 'text-green-700', Icon: HardDrive, spinning: false };
 
   const NavItem = ({ id, label, icon: Icon }: { id: PageId, label: string, icon: any }) => (
     <button
@@ -247,11 +235,11 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: AppI
         <div className="p-6 lg:p-8 mt-auto shrink-0 hidden lg:block">
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
             <div className="flex items-center gap-3 mb-2">
-                <div className={cn("w-2 h-2 rounded-full", cloudMeta.dot)} />
-                <span className={cn("text-[10px] font-black tracking-wider", cloudMeta.color)}>{cloudMeta.label}</span>
+                <localSaveMeta.Icon className={cn("h-3.5 w-3.5", localSaveMeta.color, localSaveMeta.spinning && "animate-spin")} />
+                <span className={cn("text-[10px] font-black tracking-wider", localSaveMeta.color)}>{localSaveMeta.label}</span>
             </div>
             <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
-              {cloudMeta.detail}
+              {localSaveMeta.detail}
             </p>
           </div>
         </div>
@@ -324,14 +312,6 @@ const AppInner = ({ activeTab, setActiveTab, sidebarOpen, setSidebarOpen }: AppI
                       <div className="text-[10px] text-slate-500">{localSaveMeta.detail}</div>
                     </div>
                     <span className={cn("text-[10px] font-bold", localSaveMeta.color)}>{localSaveMeta.label}</span>
-                  </div>
-                  <div className="flex items-start gap-3 rounded-xl px-3 py-2.5">
-                    <cloudMeta.Icon className={cn("mt-0.5 size-4", cloudMeta.color, cloudMeta.spinning && "animate-spin")} />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] font-bold text-slate-800">云端备份</div>
-                      <div className="text-[10px] text-slate-500">{cloudMeta.detail}</div>
-                    </div>
-                    <span className={cn("text-[10px] font-bold", cloudMeta.color)}>{cloudMeta.label.replace('云端', '')}</span>
                   </div>
                   <div className="flex items-start gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
                     <Database className={cn("mt-0.5 size-4", marketHealthStyle.color)} />

@@ -24,6 +24,7 @@ import {
   formatCapitalFlowYuan,
   getDirectLargeOrderNetYuan,
 } from '../../utils/capitalFlow';
+import { sanitizeAdvisoryLanguage } from '../../utils/advisoryLanguage';
 
 interface StockDiagnosisDialogProps {
   isOpen: boolean;
@@ -51,14 +52,16 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       }
   }, [initialStock]);
 
-  // Real-time data fetching simulation
+  // Single-flight polling: a slow request must finish before the next one starts.
   React.useEffect(() => {
     if (isOpen && initialStock?.code) {
         let isMounted = true;
+        let timer: ReturnType<typeof setTimeout> | null = null;
         
         const loadRealtimeData = async () => {
-             const ticks = await fetchStockTicks(initialStock.code);
-             if (!isMounted) return;
+             try {
+               const ticks = await fetchStockTicks(initialStock.code);
+               if (!isMounted) return;
              
              // Fix: Pass initialStock as first argument, ticks as second
              const computed = calculateRealtimeMetrics(initialStock, ticks || []);
@@ -68,8 +71,6 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
              // Extract latest price from ticks to ensure the UI feels "alive"
              let latestCurrent = initialStock.currentPrice || 0;
              let latestChange = initialStock.changePercent || 0;
-             let latestVolume = initialStock.volume || 0;
-             
              if (ticks && ticks.length > 0) {
                  const lastTick = ticks[ticks.length - 1];
                  const currentPrice = parseFloat(lastTick.price);
@@ -133,13 +134,19 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                  aiPrediction: liveSignal
              };
              
-             setStock(finalStock as Stock);
+               setStock(finalStock as Stock);
+             } finally {
+               if (isMounted && !document.hidden) {
+                 timer = setTimeout(loadRealtimeData, 5000);
+               }
+             }
         };
         
-        loadRealtimeData();
-        // V46.0: Turbo Mode (1.5s interval) for High Frequency Response
-        const timer = setInterval(loadRealtimeData, 1500);
-        return () => { isMounted = false; clearInterval(timer); };
+        void loadRealtimeData();
+        return () => {
+          isMounted = false;
+          if (timer) clearTimeout(timer);
+        };
     } else {
         setLocalMetrics(null);
     }
@@ -147,7 +154,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
 
   if (!stock) return null;
 
-  const { profile: fundProfile, detectedName: fundName } = detectFundIdentity(stock);
+  const { profile: fundProfile, detectedName: fundName, evidence: fundEvidence } = detectFundIdentity(stock);
   const capitalFlow = assessCapitalFlow(stock);
   const largeOrderNetYuan = capitalFlow.directNetYuan;
   const isVerifiedLargeOrderInflow =
@@ -1457,6 +1464,12 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       };
   }
 
+  signal = {
+    ...signal,
+    title: sanitizeAdvisoryLanguage(signal.title),
+    advice: sanitizeAdvisoryLanguage(signal.advice),
+  };
+
   if (
       shouldApplyEntryWaitGate(predictionSignalType, stock.aiPrediction?.prediction) &&
       !diagnosisRiskSignal &&
@@ -1545,7 +1558,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
           : String(sellPoint);
   const exitTimingCopy = predictionSignalType === 'SELL'
       ? {
-          label: '立即执行',
+          label: '优先评估退出',
           tone: 'text-red-600 bg-red-50 border-red-200',
           instruction: stock.aiPrediction?.positionAdvice || '当前可交易时段优先减仓或离场，不等待买入证据恢复。'
       }
@@ -1575,8 +1588,8 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
           conflictStrategy = {
               mode: 'OVERRIDE',
               title: '星门力场压制',
-              desc: `当前星门等级 LV.${gateLevel}，主力资金处于极强控盘状态，量价背离被判定为"锁仓惜售"。`,
-              action: '👉 最终决策：无视背离，维持锁仓',
+              desc: `当前规则等级 LV.${gateLevel}，量价趋势仍强，但背离风险不能被完全排除。`,
+              action: '最终建议：维持防守位，跌破即减仓',
               style: 'bg-indigo-50 border-indigo-200 text-indigo-900',
               iconColor: 'text-indigo-600',
               icon: Shield
@@ -1595,7 +1608,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   }
 
   const { riskScore: smashRisk, warning: smashWarning } = predictSmashRisk(stock, phase);
-  const isHighRiskFund = smashRisk > 70;
+  const isHighRiskFund = fundEvidence === 'DIRECT_SEAT' && smashRisk > 70;
   const closeNow = current;
 
   return (
@@ -1664,7 +1677,12 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                             <div className="w-full min-w-0 flex-1 space-y-3 text-center md:text-left">
                                 <div className="flex flex-col md:flex-row items-center justify-center md:justify-start gap-2 md:gap-4">
                                     <h4 className={cn("break-words text-xl font-black italic tracking-tighter uppercase drop-shadow-md md:text-2xl lg:text-3xl", signal.textColor)}>{signal.title}</h4>
-                                    <Badge variant="outline" className="text-white/80 border-white/20 bg-white/10 backdrop-blur-md text-[10px]">方向置信: {stock.aiPrediction?.prediction?.probability || 50}%</Badge>
+                                    <Badge variant="outline" className="text-white/80 border-white/20 bg-white/10 backdrop-blur-md text-[10px]">
+                                      规则信心 {stock.aiPrediction?.prediction?.probability || 50}%
+                                      {stock.aiPrediction?.prediction?.confidenceLow !== undefined &&
+                                        stock.aiPrediction?.prediction?.confidenceHigh !== undefined &&
+                                        ` · 参考区间 ${stock.aiPrediction.prediction.confidenceLow}-${stock.aiPrediction.prediction.confidenceHigh}%`}
+                                    </Badge>
                                 </div>
                                 
                                 {signal.advice.includes('【态势】') ? (
@@ -1677,7 +1695,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                                 <div key={idx} className="flex min-w-0 items-start gap-2 text-xs md:text-sm">
                                                     <span className={cn("shrink-0 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border",
                                                         cleanLabel === '态势' ? "bg-blue-500/20 text-blue-200 border-blue-500/30" :
-                                                        cleanLabel === '内幕' ? "bg-purple-500/20 text-purple-200 border-purple-500/30" :
+                                                        cleanLabel === '依据' ? "bg-purple-500/20 text-purple-200 border-purple-500/30" :
                                                         "bg-emerald-500/20 text-emerald-200 border-emerald-500/30"
                                                     )}>{cleanLabel}</span>
                                                     <span className="min-w-0 break-words text-white/90 leading-relaxed font-medium pt-0.5">{content}</span>
@@ -1769,7 +1787,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                             `目标价: ¥${se.target.toFixed(2)} (${se.targetLabel})`,
                             `盈亏比: 1:${se.rrRatio.toFixed(1)}`,
                             se.backtest ? `━━ 历史回测(${se.backtest.sampleSize}笔) ━━` : null,
-                            se.backtest ? `胜率: ${se.backtest.winRate.toFixed(1)}% | 期望: ${se.backtest.expectancy > 0 ? '+' : ''}${se.backtest.expectancy.toFixed(2)}%` : null,
+                            se.backtest ? `滚动代理命中: ${se.backtest.winRate.toFixed(1)}% | 期望: ${se.backtest.expectancy > 0 ? '+' : ''}${se.backtest.expectancy.toFixed(2)}%` : null,
                             se.backtest ? `盈亏因子: ${se.backtest.profitFactor.toFixed(2)} | 最优止损: ${se.backtest.optimalStopMult.toFixed(1)}×ATR` : null,
                             se.chipPeaks?.supportPeaks.length ? `━━ 筹码峰(集中度${se.chipPeaks.chipConcentration.toFixed(0)}%) ━━` : null,
                             ...(se.chipPeaks?.supportPeaks.map(p => `支撑: ¥${p.price.toFixed(2)} (${p.label})`) || []),
@@ -1925,7 +1943,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                     if (se.method?.includes('放量下杀')) factors.push({ icon: '📊', text: '放量下杀·等企稳', color: 'text-amber-600' });
                                     if (se.primaryLabel?.includes('跳空缺口') || se.scaleInLabel?.includes('跳空缺口')) factors.push({ icon: '📐', text: '跳空缺口支撑(强)', color: 'text-blue-600' });
                                     if (se.targetLabel?.includes('缺口压制')) factors.push({ icon: '🚧', text: '向下缺口压制目标', color: 'text-amber-600' });
-                                    if (se.stopLossLabel?.includes('紧凑止损')) factors.push({ icon: '🎯', text: '高胜率窄止损模式', color: 'text-emerald-600' });
+                                    if (se.stopLossLabel?.includes('紧凑止损')) factors.push({ icon: '🎯', text: '规则型窄止损模式', color: 'text-emerald-600' });
                                     else if (se.stopLossLabel?.includes('极宽止损')) factors.push({ icon: '🛡️', text: '背离型宽止损模式', color: 'text-blue-600' });
                                     else if (se.stopLossLabel?.includes('宽幅止损')) factors.push({ icon: '📏', text: '左侧宽幅止损模式', color: 'text-blue-600' });
                                     if (se.stopLossLabel?.includes('风险修正')) factors.push({ icon: '💰', text: '高砸盘风险·止损放宽', color: 'text-amber-600' });
@@ -1938,7 +1956,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                     if (se.primaryLabel?.includes('筹码峰') || se.scaleInLabel?.includes('筹码峰')) factors.push({ icon: '🏔️', text: '筹码密集峰支撑', color: 'text-purple-600' });
                                     if (se.targetLabel?.includes('筹码峰')) factors.push({ icon: '🏔️', text: '筹码峰阻力压制', color: 'text-amber-600' });
                                     if (se.method?.includes('筹码密集区')) factors.push({ icon: '📊', text: '筹码密集区·等突破', color: 'text-amber-600' });
-                                    if (se.stopLossLabel?.includes('代理验证止损')) factors.push({ icon: '📈', text: `样本外代理验证止损`, color: 'text-purple-600' });
+                                    if (se.stopLossLabel?.includes('滚动代理止损')) factors.push({ icon: '📈', text: `滚动历史代理止损`, color: 'text-purple-600' });
                                     if (se.method?.includes('历史负期望')) factors.push({ icon: '⚠️', text: '历史负期望信号', color: 'text-red-600' });
                                     
                                     if (factors.length === 0) return null;
@@ -1966,7 +1984,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                                 se.backtest.winRate >= 45 ? "bg-amber-100 text-amber-700" :
                                                 "bg-red-100 text-red-700"
                                             )}>
-                                                胜率 {se.backtest.winRate.toFixed(1)}%
+                                                滚动代理命中 {se.backtest.winRate.toFixed(1)}%
                                             </span>
                                         </div>
                                         <div className="grid grid-cols-3 gap-2">
@@ -2107,7 +2125,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                     <div className="px-6 py-4 border-b border-slate-50 bg-slate-50/50 flex items-center justify-between">
                         <div className="flex items-center gap-2">
                             <Calculator className="w-5 h-5 text-indigo-600" />
-                            <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">T+1 隔日推演 (AI PREDICTION)</h3>
+                            <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">T+1 隔日规则推演</h3>
                         </div>
                         <Badge variant="outline" className={cn("font-bold border-indigo-200 text-indigo-700 bg-indigo-50")}>
                             {overnight.riskType}
@@ -2306,7 +2324,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                     <div className="p-6 rounded-3xl bg-slate-900 text-white flex flex-col justify-between h-48 relative overflow-hidden group">
                         <div className="absolute top-0 right-0 w-24 h-24 bg-red-600/20 blur-3xl rounded-full -mr-8 -mt-8" />
                         <div className="flex items-center justify-between mb-4 relative z-10">
-                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">诱多风险 (Risk)</span>
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">诱多风险分 (Risk Score)</span>
                             <Fingerprint className="w-4 h-4 text-red-500 animate-pulse" />
                         </div>
                         <div className="flex items-baseline gap-2 relative z-10">
@@ -2314,7 +2332,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                 refinedRisk > 60 ? "text-red-500" : refinedRisk > 40 ? "text-orange-500" : "text-green-500")}>
                                 {refinedRisk.toFixed(0)}
                             </span>
-                            <span className="text-xs font-black text-slate-500">%</span>
+                            <span className="text-xs font-black text-slate-500">/100</span>
                         </div>
                         <div className="space-y-2 relative z-10 mt-4">
                              <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
@@ -2336,14 +2354,14 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                 <Crosshair className="w-6 h-6" />
                             </div>
                             <div>
-                                <h4 className="text-base font-black italic uppercase tracking-tight">盘口意图模型</h4>
+                                <h4 className="text-base font-black italic uppercase tracking-tight">盘口行为规则</h4>
                                 <div className="flex items-center gap-2 mt-1">
                                     <Badge variant="outline" className={cn("text-[10px] border-none px-1.5", 
                                         intent === 'Distribute' ? "bg-red-900/50 text-red-200" : 
                                         intent === 'Accumulate' ? "bg-emerald-900/50 text-emerald-200" : "bg-slate-800 text-slate-400")}>
-                                        {intent === 'Distribute' ? '出货' : intent === 'Accumulate' ? '吸筹' : '中性'}
+                                        {intent === 'Distribute' ? '派发风险' : intent === 'Accumulate' ? '承接特征' : '中性'}
                                     </Badge>
-                                    <span className="text-[10px] text-slate-500 font-mono">欺诈系数: {decoyScore.toFixed(0)}</span>
+                                    <span className="text-[10px] text-slate-500 font-mono">挂单背离分: {decoyScore.toFixed(0)}</span>
                                 </div>
                             </div>
                         </div>
@@ -2410,14 +2428,14 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                         <Siren className="w-6 h-6 text-orange-600 mt-0.5 shrink-0 animate-pulse" />
                         <div>
                             <h4 className="text-sm font-black text-orange-800 uppercase tracking-tight mb-1">
-                                游资/机构砸盘预警 (Smash Risk: {smashRisk})
+                                已披露席位行为风险（规则分 {smashRisk}）
                             </h4>
                             <p className="text-xs text-orange-700 leading-relaxed font-medium">
                                 {smashWarning}
                             </p>
                             {fundName && (
                                 <Badge variant="outline" className="mt-2 border-orange-200 text-orange-600 bg-white">
-                                    疑似席位: {fundName} ({fundProfile})
+                                    龙虎榜席位：{fundName} · {fundProfile.name}
                                 </Badge>
                             )}
                         </div>

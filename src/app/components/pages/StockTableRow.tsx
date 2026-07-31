@@ -401,7 +401,7 @@ export const StockTableRow = React.memo(
                          {prediction.direction === 'DOWN' && <TrendingDown className="w-2.5 h-2.5 text-green-500" />}
                          {prediction.direction === 'SIDEWAYS' && <TrendingUp className="w-2.5 h-2.5 text-slate-400 rotate-45" />}
                          <span className="text-[9px] font-black text-slate-700">
-                            {prediction.probability}% · 个股{prediction.dataReliability === 'HIGH' ? '高' : prediction.dataReliability === 'MEDIUM' ? '中' : '低'} · 市场{prediction.marketDataStatus === 'FRESH' ? '完整' : prediction.marketDataStatus === 'PARTIAL' ? '部分' : prediction.marketDataStatus === 'STALE' ? '过期' : '缺失'} · 证据{prediction.sampleSize || 0}笔
+                            规则信心{prediction.probability}% · 个股{prediction.dataReliability === 'HIGH' ? '高' : prediction.dataReliability === 'MEDIUM' ? '中' : '低'} · 市场{prediction.marketDataStatus === 'FRESH' ? '完整' : prediction.marketDataStatus === 'PARTIAL' ? '部分' : prediction.marketDataStatus === 'STALE' ? '过期' : '缺失'} · 滚动证据{prediction.sampleSize || 0}笔 · 行情{stock.sourceAsOf ? new Date(stock.sourceAsOf).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' }) : '未标注'}
                          </span>
                      </div>
                      <div className="text-[8px] font-mono text-slate-400" title="Predicted Target">
@@ -587,7 +587,7 @@ export const StockTableRow = React.memo(
                      stock.role === "Independent" ? "妖股" :
                      stock.role === "Substitute" ? "补涨" :
                      stock.role === "Main" ? "中军" :
-                     stock.role === "Follower" ? "跟风" :
+                     stock.role === "Follower" ? "后排" :
                      stock.role === "Potential" ? "潜力" : "观察"}
                 </span>
                 <span className="hidden md:inline whitespace-nowrap">
@@ -602,7 +602,7 @@ export const StockTableRow = React.memo(
                             : stock.role === "Main"
                               ? "中军容量"
                               : stock.role === "Follower"
-                                ? "跟风杂毛"
+                                ? "后排跟随"
                                 : stock.role === "Potential"
                                   ? "潜力潜伏"
                                   : stock.role === "Normal"

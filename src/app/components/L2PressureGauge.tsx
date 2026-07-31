@@ -36,7 +36,7 @@ export const L2PressureGauge: React.FC<Props> = ({ stock }) => {
         <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center justify-between">
             <div className="flex items-center gap-2">
                 <Gauge className="w-3.5 h-3.5 text-blue-600" />
-                L2 盘口细节仿真 (Order Flow Pressure)
+                量价压力代理（非 L2）
             </div>
             <Info className="w-3.5 h-3.5 text-slate-300 cursor-help" />
         </CardTitle>
@@ -46,7 +46,7 @@ export const L2PressureGauge: React.FC<Props> = ({ stock }) => {
             <div className="flex flex-col">
                 <div className="flex items-center gap-1.5 mb-1">
                     <ArrowUpCircle className="w-3 h-3 text-red-500" />
-                    <span className="text-[9px] font-black text-red-600 uppercase tracking-widest">主买盘力道</span>
+                    <span className="text-[9px] font-black text-red-600 uppercase tracking-widest">估算买方压力</span>
                 </div>
                 <div className="text-2xl font-black font-mono tracking-tighter text-red-600">
                     {pressure.buy.toFixed(1)}%
@@ -58,7 +58,7 @@ export const L2PressureGauge: React.FC<Props> = ({ stock }) => {
             </div>
             <div className="flex flex-col items-end">
                 <div className="flex items-center gap-1.5 mb-1">
-                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">主卖盘压制</span>
+                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">估算卖方压力</span>
                     <ArrowDownCircle className="w-3 h-3 text-slate-400" />
                 </div>
                 <div className="text-2xl font-black font-mono tracking-tighter text-slate-400">
@@ -84,7 +84,7 @@ export const L2PressureGauge: React.FC<Props> = ({ stock }) => {
             <div className="flex items-center justify-between mb-3 relative z-10">
                 <div className="flex items-center gap-2">
                     <Activity className="w-3.5 h-3.5 text-blue-600" />
-                    <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">订单流密度 (Density)</span>
+                    <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">换手活跃度代理</span>
                 </div>
                 <span className="text-[10px] font-black font-mono text-blue-600">{pressure.density.toFixed(0)}%</span>
             </div>
@@ -95,7 +95,7 @@ export const L2PressureGauge: React.FC<Props> = ({ stock }) => {
                 />
             </div>
             <p className="text-[9px] text-slate-400 mt-2 italic relative z-10 leading-tight">
-                反映当前价位附近的资金活跃度。密度越高，说明此处换手越激烈，是多空博弈的关键位。
+                由涨跌幅、量比和换手率估算，不是交易所逐笔或账户身份数据。
             </p>
             
             {/* Background scan effect */}

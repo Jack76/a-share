@@ -532,7 +532,10 @@ const generatePredatorStrategy = (fund: ExtendedFund, score: number): { signal: 
   // 止盈: Severely overbought
   if (rsi > 88 || (isEtf && daily > 6) || (!isEtf && daily > 4 && rsi > 80)) {
     signal = { action: "止盈", color: "text-orange-600", desc: "严重过热，立即兑现", tag: "Danger" };
-    guidance = { title: "止盈预警", action: "Sell", position: "减至 20%", reason: isEtf ? `RSI ${rsi.toFixed(0)} 极度超买，乖离率过大，随时剧烈回调。` : "短期严重超涨，建议立即转部分仓位至债基。", riskLevel: "High" };
+    const reason = rsi > 88
+      ? `RSI ${rsi.toFixed(0)} 处于极端高位，短期回撤风险显著上升。`
+      : `单日涨幅 ${daily.toFixed(2)}% 超过过热阈值，价格波动风险上升；该判断不等同于 RSI 超买。`;
+    guidance = { title: "止盈预警", action: "Sell", position: "减至 20%", reason, riskLevel: "High" };
     return { signal, guidance };
   }
 
@@ -540,7 +543,10 @@ const generatePredatorStrategy = (fund: ExtendedFund, score: number): { signal: 
   if (rsi > 75 || (isEtf && daily > 4) || (!isEtf && daily > 3 && rsi > 68)) {
     signal = { action: "减仓", color: "text-amber-600", desc: "情绪偏热，分批减仓", tag: "Beta" };
     const riskNote = maxDrawdown > 25 ? `（历史最大回撤${maxDrawdown.toFixed(0)}%，注意风控）` : "";
-    guidance = { title: "分批止盈", action: "Sell", position: "减至 50%", reason: isEtf ? `RSI ${rsi.toFixed(0)} 进入高位区，建议高抛1/3锁定利润。${riskNote}` : `短期涨幅偏大，先止盈一半观察回调确认。${riskNote}`, riskLevel: "Medium" };
+    const reason = rsi > 75
+      ? `RSI ${rsi.toFixed(0)} 进入高位区，可分批锁定利润。${riskNote}`
+      : `单日涨幅 ${daily.toFixed(2)}% 超过减仓阈值，建议分批止盈；当前 RSI ${rsi.toFixed(0)} 并未构成高位依据。${riskNote}`;
+    guidance = { title: "分批止盈", action: "Sell", position: "减至 50%", reason, riskLevel: "Medium" };
     return { signal, guidance };
   }
 
@@ -554,7 +560,7 @@ const generatePredatorStrategy = (fund: ExtendedFund, score: number): { signal: 
   // ==== BUY SIGNALS ====
 
   if (prediction.evidenceReliability === "LOW") {
-    signal = { action: "观望", color: "text-slate-500", desc: "样本外证据不足", tag: "Sleep" };
+    signal = { action: "观望", color: "text-slate-500", desc: "滚动验证证据不足", tag: "Sleep" };
     guidance = {
       title: "等待验证",
       action: "Wait",
@@ -567,9 +573,9 @@ const generatePredatorStrategy = (fund: ExtendedFund, score: number): { signal: 
 
   // 主升浪: Strong score + bullish trend
   if (score > 78 && prediction.direction === "Bull" && !isOtcChasing) {
-    signal = { action: "主升浪", color: "text-red-600", desc: "趋势稳健，长期向好", tag: "Alpha" };
+    signal = { action: "趋势增强", color: "text-red-600", desc: "趋势稳健，仍需跟踪", tag: "Alpha" };
     const mfiNote = mfi > 70 ? "资金持续流入，" : "";
-    guidance = { title: "趋势配置", action: "Buy", position: "60% → 80%", reason: isEtf ? `${mfiNote}确认进入主升浪，胜率高，建议顺势加仓。` : `${mfiNote}长期趋势向好且未过热。建议在 14:50 前确认申购。`, riskLevel: "Medium" };
+    guidance = { title: "趋势配置", action: "Buy", position: "60% → 80%", reason: isEtf ? `${mfiNote}滚动趋势指标向上，但不代表未来收益确定；建议分批并设置退出条件。` : `${mfiNote}长期趋势向好且未过热。建议在 14:50 前确认申购。`, riskLevel: "Medium" };
     return { signal, guidance };
   }
 
@@ -590,7 +596,7 @@ const generatePredatorStrategy = (fund: ExtendedFund, score: number): { signal: 
 
   // 黄金坑: Strong fund + deep pullback + RSI oversold
   if (score > pitScoreBar && daily < pitThreshold && rsi < 45) {
-    signal = { action: "黄金坑", color: "text-purple-600", desc: "良性回调，低吸机会", tag: "Alpha" };
+    signal = { action: "深度回调", color: "text-purple-600", desc: "回调达到观察阈值", tag: "Beta" };
     const ddNote = maxDrawdown > 20 ? ` 注意: 历史回撤${maxDrawdown.toFixed(0)}%，控制仓位。` : "";
     const trendTag = trend === "Bear" ? "（逆势）" : "";
     guidance = { title: `逆势布局${trendTag}`, action: "Buy", position: trend === "Bear" ? "20% → 35%" : "30% → 50%", reason: isEtf ? `回调 ${daily.toFixed(2)}%（阈值${pitThreshold.toFixed(2)}%），RSI ${rsi.toFixed(0)} 低位区。${ddNote}` : `净值回调 ${Math.abs(daily).toFixed(2)}%，RSI ${rsi.toFixed(0)}，适合"大跌大买"。${ddNote}`, riskLevel: trend === "Bear" ? "Medium" : "Low" };
@@ -2499,9 +2505,9 @@ const FundDetailDialog: React.FC<{
           {/* AI Prediction */}
           <div className="bg-indigo-50/50 rounded-lg p-3 border border-indigo-100 space-y-2">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5"><BrainCircuit className="w-4 h-4 text-indigo-500" /><span className="text-xs font-bold text-slate-700">AI 智能推演 (3日)</span></div>
+              <div className="flex items-center gap-1.5"><BrainCircuit className="w-4 h-4 text-indigo-500" /><span className="text-xs font-bold text-slate-700">滚动趋势推演（3日）</span></div>
               <span className="text-[10px] font-mono text-slate-400">
-                方向概率 {fund.prediction.confidence.toFixed(0)}% · 数据{fund.prediction.dataReliability === "HIGH" ? "高" : fund.prediction.dataReliability === "MEDIUM" ? "中" : "低"}/证据{fund.prediction.evidenceReliability === "HIGH" ? "高" : fund.prediction.evidenceReliability === "MEDIUM" ? "中" : "低"}
+                规则信心 {fund.prediction.confidence.toFixed(0)}% · 滚动命中 {fund.prediction.winRate.toFixed(0)}%/{fund.prediction.sampleSize}样本 · 数据{fund.prediction.dataReliability === "HIGH" ? "高" : fund.prediction.dataReliability === "MEDIUM" ? "中" : "低"}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -2731,9 +2737,9 @@ const HoldingDetailDialog: React.FC<{
               {/* AI Prediction & Levels */}
               <div className="bg-indigo-50/50 rounded-lg p-3 border border-indigo-100 space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5"><BrainCircuit className="w-4 h-4 text-indigo-500" /><span className="text-xs font-bold text-slate-700">AI 智能推演 (3日)</span></div>
+                  <div className="flex items-center gap-1.5"><BrainCircuit className="w-4 h-4 text-indigo-500" /><span className="text-xs font-bold text-slate-700">滚动趋势推演（3日）</span></div>
                   <span className="text-[10px] font-mono text-slate-400">
-                    方向概率 {fund!.prediction.confidence.toFixed(0)}% · 数据{fund!.prediction.dataReliability === "HIGH" ? "高" : fund!.prediction.dataReliability === "MEDIUM" ? "中" : "低"}/证据{fund!.prediction.evidenceReliability === "HIGH" ? "高" : fund!.prediction.evidenceReliability === "MEDIUM" ? "中" : "低"}
+                    规则信心 {fund!.prediction.confidence.toFixed(0)}% · 滚动命中 {fund!.prediction.winRate.toFixed(0)}%/{fund!.prediction.sampleSize}样本 · 数据{fund!.prediction.dataReliability === "HIGH" ? "高" : fund!.prediction.dataReliability === "MEDIUM" ? "中" : "低"}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -3391,8 +3397,28 @@ type ViewMode = "grid" | "list";
 /** Signal tag priority for sorting (higher = more aggressive) */
 const SIGNAL_TAG_WEIGHT: Record<string, number> = { Alpha: 4, Beta: 3, Danger: 2, Sleep: 1 };
 const SIGNAL_ACTION_WEIGHT: Record<string, number> = {
-  "主升浪": 90, "黄金坑": 80, "加仓": 70, "持仓": 50,
+  "趋势增强": 90, "深度回调": 80, "加仓": 70, "持仓": 50,
   "减仓": 30, "止盈": 20, "警戒": 15, "止损": 10, "观望": 0,
+};
+
+const withFundLoadDeadline = async <T,>(
+  promise: Promise<T>,
+  timeoutMs = 25_000,
+): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('基金数据请求超时，请稍后重试')),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 };
 
 export const FundRadar: React.FC = () => {
@@ -3588,9 +3614,12 @@ export const FundRadar: React.FC = () => {
 
       console.log(`[FundRadar] Loading ${allCodes.length} codes (ETF: ${etfCodes.length}, OTC: ${otcCodes.length})`);
 
-      const [etfRealtime, etfHist, fundHist, otcRealtime] = await Promise.all([
-        fetchStockData(etfCodes, forceRefresh), fetchStockHistoryBatch(etfCodes), fetchFundHistoryBatch(otcCodes), fetchFunds(otcCodes, forceRefresh),
-      ]);
+      const [etfRealtime, etfHist, fundHist, otcRealtime] = await withFundLoadDeadline(Promise.all([
+        fetchStockData(etfCodes, forceRefresh),
+        fetchStockHistoryBatch(etfCodes),
+        fetchFundHistoryBatch(otcCodes),
+        fetchFunds(otcCodes, forceRefresh),
+      ]));
 
       const mergedFunds: ExtendedFund[] = [];
       const historyMap = { ...etfHist, ...fundHist };
@@ -3990,7 +4019,7 @@ export const FundRadar: React.FC = () => {
             <Badge variant="outline" className="ml-2 border-red-200 text-red-600 bg-red-50 text-[10px]">V66.8</Badge>
           </h2>
           <p className="text-slate-500 text-xs mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span>智能监控 · 持仓管理 · 标签分组 · 调仓建议 · 盈亏日历</span>
+            <span>规则监控 · 持仓管理 · 标签分组 · 调仓建议 · 盈亏日历</span>
             {lastRefresh && <span className="text-slate-400">请求于 {lastRefresh}</span>}
             <span className="text-slate-400">持仓仅保存在本机</span>
           </p>
@@ -4281,10 +4310,10 @@ export const FundRadar: React.FC = () => {
             <Filter className={cn("w-3 h-3 transition-colors", isSignalFiltered ? "text-red-500" : "text-slate-400")} />
             {/* Tag-level quick filters */}
             {[
-              { key: "Alpha", label: "Alpha", count: signalCounts.tagCounts.Alpha, activeStyle: "bg-red-600 text-white border-red-600", dot: "bg-red-500" },
-              { key: "Beta", label: "Beta", count: signalCounts.tagCounts.Beta, activeStyle: "bg-blue-600 text-white border-blue-600", dot: "bg-blue-500" },
-              { key: "Danger", label: "Danger", count: signalCounts.tagCounts.Danger, activeStyle: "bg-orange-500 text-white border-orange-500", dot: "bg-orange-400" },
-              { key: "Sleep", label: "Sleep", count: signalCounts.tagCounts.Sleep, activeStyle: "bg-slate-500 text-white border-slate-500", dot: "bg-slate-300" },
+              { key: "Alpha", label: "强趋势", count: signalCounts.tagCounts.Alpha, activeStyle: "bg-red-600 text-white border-red-600", dot: "bg-red-500" },
+              { key: "Beta", label: "配置", count: signalCounts.tagCounts.Beta, activeStyle: "bg-blue-600 text-white border-blue-600", dot: "bg-blue-500" },
+              { key: "Danger", label: "风险", count: signalCounts.tagCounts.Danger, activeStyle: "bg-orange-500 text-white border-orange-500", dot: "bg-orange-400" },
+              { key: "Sleep", label: "观察", count: signalCounts.tagCounts.Sleep, activeStyle: "bg-slate-500 text-white border-slate-500", dot: "bg-slate-300" },
             ].map(f => (
               <button key={f.key}
                 onClick={() => toggleSignalFilter(f.key)}
@@ -4299,8 +4328,8 @@ export const FundRadar: React.FC = () => {
             <div className="w-px h-4 bg-slate-200 mx-0.5" />
             {/* Individual action filters (multi-select) */}
             {[
-              { action: "主升浪", color: "text-red-600 border-red-300 bg-red-50" },
-              { action: "黄金坑", color: "text-purple-600 border-purple-300 bg-purple-50" },
+              { action: "趋势增强", color: "text-red-600 border-red-300 bg-red-50" },
+              { action: "深度回调", color: "text-purple-600 border-purple-300 bg-purple-50" },
               { action: "加仓", color: "text-blue-600 border-blue-300 bg-blue-50" },
               { action: "持仓", color: "text-blue-500 border-blue-200 bg-blue-50" },
               { action: "减仓", color: "text-amber-600 border-amber-300 bg-amber-50" },
@@ -4334,10 +4363,10 @@ export const FundRadar: React.FC = () => {
             const total = signalCounts.total;
             const { tagCounts } = signalCounts;
             const segments = [
-              { tag: "Alpha", count: tagCounts.Alpha, color: "bg-red-500", label: "Alpha" },
-              { tag: "Beta", count: tagCounts.Beta, color: "bg-blue-500", label: "Beta" },
-              { tag: "Danger", count: tagCounts.Danger, color: "bg-orange-400", label: "Danger" },
-              { tag: "Sleep", count: tagCounts.Sleep, color: "bg-slate-300", label: "Sleep" },
+              { tag: "Alpha", count: tagCounts.Alpha, color: "bg-red-500", label: "强趋势" },
+              { tag: "Beta", count: tagCounts.Beta, color: "bg-blue-500", label: "配置" },
+              { tag: "Danger", count: tagCounts.Danger, color: "bg-orange-400", label: "风险" },
+              { tag: "Sleep", count: tagCounts.Sleep, color: "bg-slate-300", label: "观察" },
             ].filter(s => s.count > 0);
             return (
               <div className={cn("items-center gap-2", mobileFiltersOpen ? "flex" : "hidden sm:flex")}>

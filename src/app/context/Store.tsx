@@ -48,21 +48,24 @@ import {
 import { getLocalHistoryBatch, setLocalHistoryBatch } from '../services/localDb'; // Fix: Correct imports from localDb
 import { detectMarketEvents } from "../utils/events";
 import { getPresetStocks, detectEventDrivenMode, type EventDrivenDetection } from "../data/presetStocks";
-import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { calculateRealtimeMetrics } from "../utils/realtimeAnalysis";
 import { detectBlackSwan, shouldOverrideSignal } from "../utils/blackSwanDetector";
 import { calculateThemeBreadthConsensus, normalizeMarketConcept } from '../utils/marketConcepts';
 import type { MarketRefreshStatus } from '../utils/dataHealth';
 import { getDirectLargeOrderNetYuan } from '../utils/capitalFlow';
+import { getChinaTradingClock } from '../utils/marketClock';
+import { syncPredictionLedger } from '../utils/predictionLedger';
+import { sanitizeAdvisoryLanguage } from '../utils/advisoryLanguage';
 
 interface TradingState {
   stocks?: Stock[];
   themes?: Theme[];
-  metrics?: DailyMetrics;
   journal?: JournalEntry;
+  journalHistory?: JournalEntry[];
   phaseHistory?: PhaseRecord[];
-  indexTechnicals?: IndexTechnicals;
 }
+
+const getCanonicalStockCode = (code: string) => code.replace(/^(sh|sz|bj)/i, '');
 
 export interface IndexTechnicals {
   ma5: number;
@@ -109,14 +112,13 @@ interface TradingContextType {
   removeStock: (id: string) => void;
   journal: JournalEntry;
   setJournal: (entry: JournalEntry) => void;
+  journalHistory: JournalEntry[];
   marketIndices: MarketIndex[];
   marketStats: MarketStatsSnapshot | null;
   marketThemes: Theme[]; // v7.2 全市场题材数据
   indexTechnicals: IndexTechnicals | null;
   refreshData: () => Promise<void>;
   isMarketOpen: boolean;
-  connectionStatus: 'connected' | 'disconnected' | 'connecting';
-  isSaving: boolean;
   localSaveStatus: 'saved' | 'saving' | 'error';
   marketRefreshStatus: MarketRefreshStatus;
   lastMarketRefreshAt: number | null;
@@ -157,14 +159,7 @@ const getMarketStatsAge = (snapshot: MarketStatsSnapshot) => {
   return Math.max(reportedAge, asOfAge);
 };
 
-const isChinaMarketSession = (date = new Date()) => {
-  const china = new Date(date.getTime() + 8 * 60 * 60 * 1000);
-  const weekday = china.getUTCDay();
-  const minutes = china.getUTCHours() * 60 + china.getUTCMinutes();
-  return weekday >= 1 && weekday <= 5 &&
-    ((minutes >= 9 * 60 + 15 && minutes <= 11 * 60 + 35) ||
-      (minutes >= 12 * 60 + 55 && minutes <= 15 * 60 + 5));
-};
+const isChinaMarketSession = (date = new Date()) => getChinaTradingClock(date).isMarketOpen;
 
 const isMarketStatsUsable = (snapshot: MarketStatsSnapshot | null): snapshot is MarketStatsSnapshot => {
   if (!snapshot || snapshot.totalCount < 1_000) return false;
@@ -191,7 +186,7 @@ const isMarketStatsUsable = (snapshot: MarketStatsSnapshot | null): snapshot is 
 };
 
 const defaultJournal: JournalEntry = {
-  date: new Date().toISOString().split('T')[0],
+  date: getChinaTradingClock().tradeDate,
   phase: 'Chaos',
   whatWentRight: '',
   whatWentWrong: '',
@@ -205,6 +200,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [themes, setThemes] = useState<Theme[]>([]);
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [journal, setJournal] = useState<JournalEntry>(defaultJournal);
+  const [journalHistory, setJournalHistory] = useState<JournalEntry[]>([]);
   const [phase, setPhase] = useState<MarketPhase>('Chaos');
   const [phaseHistory, setPhaseHistory] = useState<PhaseRecord[]>([]);
   const [sentimentHistory, setSentimentHistory] = useState<SentimentPoint[]>([]);
@@ -214,8 +210,6 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [marketThemes, setMarketThemes] = useState<Theme[]>([]);
   const [indexTechnicals, setIndexTechnicals] = useState<IndexTechnicals | null>(null);
   const [isMarketOpen, setIsMarketOpen] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('connecting');
-  const [isSaving, setIsSaving] = useState(false);
   const [localSaveStatus, setLocalSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
   const [marketRefreshStatus, setMarketRefreshStatus] = useState<MarketRefreshStatus>('idle');
   const [lastMarketRefreshAt, setLastMarketRefreshAt] = useState<number | null>(null);
@@ -240,6 +234,18 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => { metricsRef.current = metrics; }, [metrics]);
   useEffect(() => { historyRef.current = sentimentHistory; }, [sentimentHistory]);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
+
+  useEffect(() => {
+    if (!stocks.some(stock => stock.aiPrediction?.prediction)) return;
+    const timer = window.setTimeout(() => {
+      try {
+        syncPredictionLedger(stocks);
+      } catch (error) {
+        console.warn('Prediction ledger update failed', error);
+      }
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [stocks]);
 
   const analyzeLiveStockSignal = useCallback((
     stock: Stock,
@@ -392,9 +398,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         
         const prediction = {
             trend: signal.trend,
-            summary: signal.summary,
-            strategy: signal.strategy,
-            positionAdvice: signal.positionAdvice,
+            summary: sanitizeAdvisoryLanguage(signal.summary),
+            strategy: sanitizeAdvisoryLanguage(signal.strategy),
+            positionAdvice: sanitizeAdvisoryLanguage(signal.positionAdvice),
             winRate: signal.prediction?.probability || 50,
             confidence: signal.prediction?.probability || 50,
             buyPoint: `¥${signal.buyPoint.toFixed(2)}`,
@@ -503,13 +509,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   useEffect(() => {
     const checkTime = () => {
-      const now = new Date();
-      const hour = now.getHours();
-      const minute = now.getMinutes();
-      const isWeekday = now.getDay() >= 1 && now.getDay() <= 5;
-      const isMorning = (hour === 9 && minute >= 15) || (hour === 10) || (hour === 11 && minute <= 30);
-      const isAfternoon = (hour >= 13 && hour < 15);
-      setIsMarketOpen(isWeekday && (isMorning || isAfternoon));
+      setIsMarketOpen(getChinaTradingClock().isMarketOpen);
     };
     checkTime();
     const timer = setInterval(checkTime, 60000);
@@ -517,271 +517,76 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   const isRefreshing = useRef(false);
-  const saveDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSavePayload = useRef<any>({});
-  const MAX_SAVE_RETRIES = 2;
+  const LOCAL_STATE_KEY = 'dragon-quant-device-v2';
 
-  // V66.5: Flush pending saves on page unload (survives tab close/refresh)
-  // Uses fetch+keepalive instead of sendBeacon because Supabase requires Authorization header
-  useEffect(() => {
-    const handleUnload = () => {
-      if (Object.keys(pendingSavePayload.current).length > 0 && projectId) {
-        const bodyStr = JSON.stringify(pendingSavePayload.current);
-        // keepalive fetch survives page unload (up to 64KB body) and supports custom headers
-        if (bodyStr.length < 64000) {
-          try {
-            fetch(
-              `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/data`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
-                body: bodyStr,
-                keepalive: true,
-              }
-            );
-          } catch (_) { /* best-effort */ }
-        }
-        pendingSavePayload.current = {};
-      }
-    };
-    window.addEventListener('beforeunload', handleUnload);
-    return () => window.removeEventListener('beforeunload', handleUnload);
-  }, []);
-
-  const saveData = async (partialData: Partial<TradingState>, immediate = false) => {
-    setIsSaving(true);
+  const saveData = useCallback(async (partialData: Partial<TradingState>, _immediate = false) => {
     setLocalSaveStatus('saving');
     try {
-        // Optimization: Create a lightweight version for persistence
-        // Strip 'history' from stocks to prevent payload bloat and broken pipes
         const payload: any = { ...partialData };
         if (Array.isArray(payload.stocks)) {
-            // v10.4 Optimization: Filter out auto-discovered stocks to prevent payload bloat
             const persistentStocks = payload.stocks.filter((s: Stock) => {
                 const isAuto = s.tags?.includes('Auto-Discovered');
-                const isImportant = s.status === 'Hold' || (s.status as string) === 'Buy';
+                const isImportant = s.status === 'Hold';
                 return !(isAuto && !isImportant);
             });
 
-            payload.stocks = persistentStocks.map((s: Stock) => {
-                // Strip ALL transient/derived data. Only keep core metadata and user settings.
-                // V66.5: Comprehensive strip list — every field recalculated on refresh
-                // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                const { 
-                    history, technicals, realtimeMetrics, aiPrediction, trapSignals, stargate,
-                    ticks, dragonTigerBoard, marginData, intradayIndicators,
-                    // Order book data
-                    buyVolume, sellVolume, bidAmount, askAmount,
-                    bid1Amount, bid2Amount, bid3Amount, ask1Amount, ask2Amount, ask3Amount,
-                    // Transient scores (recalculated from real-time data)
-                    strengthScore, resonanceScore, independenceScore, trapRiskScore,
-                    moneyQualityScore, sealIntensity, boardResilience, resonanceFactor,
-                    exhaustionSignal, isThemeDropout,
-                    // Real-time price data (re-fetched)
-                    volume, turnoverRate, largeOrderNetYuan, largeOrderNetSource,
-                    largeOrderNetAsOf, mainMoneyIn, committeeRatio,
-                    avgVolume, sealAmount, bigBuyAmount,
-                    // V66.5: Additional transient fields missed in V63.1
-                    sealQualityScore, liquidityEntropy, consecutiveLimitUps,
-                    auctionData, premiumExpectation,
-                    ...rest 
-                } = s as any; 
-                return rest;
-            });
+            payload.stocks = persistentStocks.map((s: Stock) => ({
+                id: s.id,
+                code: s.code,
+                name: s.name,
+                concept: s.concept,
+                role: s.role,
+                status: s.status,
+                notes: s.notes,
+                theme: s.theme,
+                costPrice: s.costPrice,
+                buyDate: s.buyDate,
+                trailingStopPrice: s.trailingStopPrice,
+                trailingStopMode: s.trailingStopMode,
+                profitTarget: s.profitTarget,
+                tags: s.tags?.filter(tag => tag !== 'Auto-Discovered'),
+            }));
         }
 
-        let localSaved = false;
-        try {
-            const saved = localStorage.getItem('trading-system-v1');
-            const currentData = saved ? JSON.parse(saved) : {};
-            const newData = { ...currentData, ...payload };
-            localStorage.setItem('trading-system-v1', JSON.stringify(newData));
-            localSaved = true;
-        } catch (lsErr) {
-            console.warn('Local save failed, retrying with compact payload...', lsErr);
-            try {
-                localStorage.removeItem('trading-system-v1');
-                localStorage.setItem('trading-system-v1', JSON.stringify(payload));
-                localSaved = true;
-            } catch (retryError) {
-                console.error('Local save retry failed', retryError);
-            }
-        }
-        setLocalSaveStatus(localSaved ? 'saved' : 'error');
-        
-        // Accumulate changes for network debounce
-        pendingSavePayload.current = { ...pendingSavePayload.current, ...payload };
-
-        if (projectId) {
-          if (saveDebounceTimer.current) {
-              clearTimeout(saveDebounceTimer.current);
-          }
-
-          const doFetch = async () => {
-              // V66.5: Snapshot pending data and clear immediately to avoid double-send
-              const dataToSend = { ...pendingSavePayload.current };
-              pendingSavePayload.current = {};
-              const finalBodyStr = JSON.stringify(dataToSend);
-
-              const attemptFetch = async (body: string, maxAttempts: number): Promise<void> => {
-                for (let attempt = 0; attempt <= maxAttempts; attempt++) {
-                  try {
-                    // V66.5: Skip if browser is offline
-                    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-                      console.warn('[Save] Browser offline, deferring to next save cycle (LS has data)');
-                      try { pendingSavePayload.current = { ...pendingSavePayload.current, ...JSON.parse(body) }; } catch (_) {}
-                      setConnectionStatus('disconnected');
-                      return;
-                    }
-
-                    const bodySizeKB = Math.round(body.length / 1024);
-                    if (bodySizeKB > 500) {
-                      console.warn(`[Save] Payload size: ${bodySizeKB}KB — may exceed Edge Function limits`);
-                    }
-
-                    const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 15000);
-                    const useKeepalive = body.length < 64000;
-                    
-                    const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/data`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
-                      body, 
-                      signal: controller.signal,
-                      keepalive: useKeepalive,
-                    });
-                    
-                    clearTimeout(timeout);
-                    
-                    if (response.ok) {
-                      setConnectionStatus('connected');
-                      return;
-                    } else {
-                      console.warn('Save failed with status:', response.status);
-                      setConnectionStatus('disconnected');
-                      return; // Server responded — not transient, don't retry
-                    }
-                  } catch (fetchError: any) {
-                    if (fetchError.name === 'AbortError') {
-                      console.warn('Save request timed out');
-                      setConnectionStatus('disconnected');
-                      return;
-                    }
-                    
-                    if (attempt < maxAttempts) {
-                      const backoff = 3000 * (attempt + 1);
-                      console.warn(`[Save] Retry ${attempt + 1}/${maxAttempts} in ${backoff}ms — ${fetchError.message}`);
-                      await new Promise(r => setTimeout(r, backoff));
-                      continue;
-                    }
-                    
-                    // Retries exhausted — re-queue for next save cycle
-                    console.warn('[Save] Retries exhausted, re-queuing for next cycle:', fetchError.message);
-                    try { pendingSavePayload.current = { ...pendingSavePayload.current, ...JSON.parse(body) }; } catch (_) {}
-                    setConnectionStatus('disconnected');
-                  }
-                }
-              };
-
-              try {
-                await attemptFetch(finalBodyStr, MAX_SAVE_RETRIES);
-              } finally {
-                setIsSaving(false);
-                saveDebounceTimer.current = null;
-              }
-          };
-
-          if (immediate) {
-              doFetch();
-          } else {
-              saveDebounceTimer.current = setTimeout(doFetch, 2000);
-          }
-        } else {
-             setIsSaving(false);
-        }
+        delete payload.metrics;
+        const saved = localStorage.getItem(LOCAL_STATE_KEY);
+        const currentData = saved ? JSON.parse(saved) : {};
+        localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify({
+          ...currentData,
+          ...payload,
+          storageMode: 'device-local',
+          version: 2,
+        }));
+        setLocalSaveStatus('saved');
     } catch (e) {
       console.error('Save data error:', e);
       setLocalSaveStatus('error');
-      setConnectionStatus('disconnected');
-      setIsSaving(false);
     }
-  };
+  }, []);
+
+  const updateJournal = useCallback((entry: JournalEntry) => {
+    setJournal(entry);
+    setJournalHistory(previous => {
+      const next = [
+        entry,
+        ...previous.filter(item => item.date !== entry.date),
+      ].slice(0, 120);
+      void saveData({ journal: entry, journalHistory: next }, true);
+      return next;
+    });
+  }, [saveData]);
 
   const loadData = async () => {
-    setConnectionStatus('connecting');
     try {
-      let data: any = {};
-      let cloudLoaded = false;
-      
-      if (projectId) {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 15000);
-          
-          const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/data`, {
-            headers: { 'Authorization': `Bearer ${publicAnonKey}` },
-            signal: controller.signal
-          });
-          
-          clearTimeout(timeout);
-          
-          if (res.ok) {
-            data = await res.json();
-            cloudLoaded = true;
-            setConnectionStatus('connected');
-          } else {
-            console.warn('Load failed with status:', res.status);
-            setConnectionStatus('disconnected');
-          }
-        } catch (fetchError: any) {
-          if (fetchError.name === 'AbortError') {
-            console.warn('Load request timed out');
-          } else {
-            console.warn('Load fetch error:', fetchError);
-          }
-          setConnectionStatus('disconnected');
-        }
-      }
-      
-      // Load Local Data as Backup / Merge Source
-      const saved = localStorage.getItem('trading-system-v1');
-      const localData = saved ? JSON.parse(saved) : {};
-
-      if (!cloudLoaded) {
-          // If cloud failed, use local entirely
-          data = localData;
-      }
-
-      // Logic Change v32.1 & v43.0: 
-      // Merge Strategy: Cloud is Truth, but Local might have unsaved new items (from offline/debounce gap)
-      // We assume Cloud Data is array of stocks.
-      let finalStocks: Stock[] = [];
-      
-      const cloudStocks = Array.isArray(data.stocks) ? data.stocks : [];
-      const localStocks = Array.isArray(localData.stocks) ? localData.stocks : [];
-
-      if (cloudLoaded && localStocks.length > 0) {
-          // Smart Merge: Add local stocks that are NOT in cloud (by ID)
-          // This rescues items added just before a refresh/crash
-          const cloudIds = new Set(cloudStocks.map((s: any) => s.id));
-          const unsavedLocals = localStocks.filter((s: any) => !cloudIds.has(s.id));
-          
-          if (unsavedLocals.length > 0) {
-              console.log(`Rescuing ${unsavedLocals.length} unsaved stocks from local storage`);
-              finalStocks = [...cloudStocks, ...unsavedLocals];
-              // Trigger a background save to sync these rescued items back to cloud
-              setTimeout(() => saveData({ stocks: finalStocks }, true), 5000);
-          } else {
-              finalStocks = cloudStocks;
-          }
-      } else {
-          // Either cloud failed (use local) or no local data (use cloud)
-          finalStocks = cloudLoaded ? cloudStocks : localStocks;
-      }
+      const saved = localStorage.getItem(LOCAL_STATE_KEY);
+      const data: any = saved ? JSON.parse(saved) : {};
+      let finalStocks: Stock[] = Array.isArray(data.stocks) ? data.stocks : [];
       
       // AUTO-MIGRATION LOGIC (v42.0):
       // Always enforce the latest metadata (concept, name, role) from presetStocks.ts
-      const presets = getPresetStocks();
+      const presets = Array.from(
+        new Map(getPresetStocks().map(stock => [stock.code, stock])).values(),
+      );
       // Normalize preset keys for fuzzy matching (strip prefix)
       const presetMap = new Map(presets.map(p => [p.code, p]));
       const presetMapNoPrefix = new Map(presets.map(p => [p.code.replace(/^(sh|sz|bj)/, ''), p]));
@@ -831,18 +636,18 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
 
       // Deduplicate after potential upgrades (in case both 600111 and sh600111 existed)
-      const uniqueMap = new Map();
-      finalStocks.forEach(s => uniqueMap.set(s.code, s));
+      const uniqueMap = new Map<string, Stock>();
+      finalStocks.forEach(s => uniqueMap.set(getCanonicalStockCode(s.code), s));
       finalStocks = Array.from(uniqueMap.values());
 
       // If list is empty (first run), seed with presets
-      if (finalStocks.length === 0 && !cloudLoaded && !saved) {
+      if (finalStocks.length === 0 && !saved) {
           finalStocks = presets;
           hasChanges = true;
       } else {
           // Check if we need to merge new presets
-          const existingCodes = new Set(finalStocks.map(s => s.code));
-          const newStocks = presets.filter(p => !existingCodes.has(p.code));
+          const existingCodes = new Set(finalStocks.map(s => getCanonicalStockCode(s.code)));
+          const newStocks = presets.filter(p => !existingCodes.has(getCanonicalStockCode(p.code)));
           
           if (newStocks.length > 0) {
               console.log(`Adding ${newStocks.length} new preset stocks`);
@@ -850,6 +655,10 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
               hasChanges = true;
           }
       }
+
+      finalStocks = Array.from(
+        new Map(finalStocks.map(stock => [getCanonicalStockCode(stock.code), stock])).values(),
+      );
 
       // Force Save if we made any migration changes
       if (hasChanges) {
@@ -870,12 +679,12 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       setStocks(finalStocks);
       if (data.themes) setThemes(data.themes);
-      if (data.metrics) setMetrics(data.metrics);
       if (data.journal) setJournal(data.journal);
+      if (Array.isArray(data.journalHistory)) setJournalHistory(data.journalHistory);
       if (data.phaseHistory) setPhaseHistory(data.phaseHistory);
-      setConnectionStatus(cloudLoaded ? 'connected' : 'disconnected');
     } catch (e) {
-      setConnectionStatus('disconnected');
+      console.warn('Local data load failed', e);
+      setLocalSaveStatus('error');
     }
   };
 
@@ -1554,7 +1363,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // 1. Promote "Auto-Discovered" stocks to "Manual" when added/touched
   // 2. Ensure duplicates update the existing record instead of being ignored
   const addStock = (s: Stock) => { 
-      const existingIndex = stocks.findIndex(x => x.code === s.code);
+      const existingIndex = stocks.findIndex(
+        stock => getCanonicalStockCode(stock.code) === getCanonicalStockCode(s.code),
+      );
       let n = [...stocks];
       
       if (existingIndex >= 0) {
@@ -1581,20 +1392,23 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const addStocks = (list: Stock[]) => { 
       // Merge list into stocks, promoting duplicates
-      const stockMap = new Map<string, Stock>(stocks.map(s => [s.code, s]));
+      const stockMap = new Map<string, Stock>(
+        stocks.map(stock => [getCanonicalStockCode(stock.code), stock]),
+      );
       
       list.forEach(s => {
-          const existing = stockMap.get(s.code);
+          const canonicalCode = getCanonicalStockCode(s.code);
+          const existing = stockMap.get(canonicalCode);
           if (existing) {
               // If batch adding, we typically don't strip Auto-Discovered unless specified
               // But for safety, let's assume batch adds are explicit
               // For now, only update if the new one is NOT auto-discovered
               if (!s.tags?.includes('Auto-Discovered')) {
                   const newTags = existing.tags?.filter(t => t !== 'Auto-Discovered') || [];
-                  stockMap.set(s.code, { ...existing, ...s, tags: newTags });
+                  stockMap.set(canonicalCode, { ...existing, ...s, tags: newTags });
               }
           } else {
-              stockMap.set(s.code, s);
+              stockMap.set(canonicalCode, s);
           }
       });
       
@@ -1737,14 +1551,14 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const contextValue = useMemo(() => ({
     metrics, setMetrics, sentimentHistory, phase, phaseHistory, marketEvents, themes,
     addTheme, removeTheme, stocks, addStock, addStocks, updateStock, updateStocks, removeStock,
-    journal, setJournal, marketIndices, marketStats, marketThemes, indexTechnicals, refreshData, isMarketOpen, connectionStatus, isSaving, localSaveStatus,
+    journal, setJournal: updateJournal, journalHistory, marketIndices, marketStats, marketThemes, indexTechnicals, refreshData, isMarketOpen, localSaveStatus,
     marketRefreshStatus, lastMarketRefreshAt, marketRefreshError,
     forceRefreshHistory, eventDrivenMode, analyzeLiveStockSignal
   }), [
     metrics, sentimentHistory, phase, phaseHistory, marketEvents, themes, stocks,
-    journal, marketIndices, marketStats, marketThemes, indexTechnicals, isMarketOpen, connectionStatus, isSaving, localSaveStatus,
+    journal, journalHistory, marketIndices, marketStats, marketThemes, indexTechnicals, isMarketOpen, localSaveStatus,
     marketRefreshStatus, lastMarketRefreshAt, marketRefreshError, eventDrivenMode,
-    analyzeLiveStockSignal
+    analyzeLiveStockSignal, updateJournal
   ]);
 
   return (
@@ -1777,14 +1591,13 @@ export const useTrading = () => {
       removeStock: () => {},
       journal: defaultJournal,
       setJournal: () => {},
+      journalHistory: [],
       marketIndices: [],
       marketStats: null,
       marketThemes: [],
       indexTechnicals: null,
       refreshData: async () => {},
       isMarketOpen: false,
-      connectionStatus: 'connecting' as const,
-      isSaving: false,
       localSaveStatus: 'saved' as const,
       marketRefreshStatus: 'idle' as const,
       lastMarketRefreshAt: null,

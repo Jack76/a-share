@@ -98,14 +98,14 @@ export const StockProfileCard: React.FC<Props> = ({ stock }) => {
                 <div className="flex-1">
                     <div className="flex items-center justify-between mb-0.5">
                         <span className={cn("text-[10px] font-black uppercase tracking-widest", isTrap ? "text-red-600" : isWarning ? "text-orange-600" : "text-green-600")}>
-                            {isTrap ? 'TrapGuard 诱多警告' : isWarning ? 'TrapGuard 风险预警' : 'AI 安全评级: 稳健'}
+                            {isTrap ? 'TrapGuard 诱多警告' : isWarning ? 'TrapGuard 风险预警' : '规则风险评级：稳健'}
                         </span>
                         <span className="text-[10px] font-black text-slate-400">P:{metrics.marketTemp}%</span>
                     </div>
                     <p className="text-[11px] font-bold text-slate-700 leading-tight italic">
                         {stock.trapSignals && stock.trapSignals.length > 0 ? 
                          stock.trapSignals[0].description : 
-                         isTrap ? '筹码高位松动，算法监测到主力虚假申报诱多。' : 
+                         isTrap ? '筹码高位松动，量价与挂单指标出现诱多风险。' :
                          isWarning ? '监测到量价背离信号，谨防假突破风险。' :
                          '当前情绪周期下，核心资产具备较强支撑位。'}
                     </p>
@@ -121,7 +121,7 @@ export const StockProfileCard: React.FC<Props> = ({ stock }) => {
                      <div className="flex items-center gap-2">
                         <Users className={cn("w-4 h-4", isHighRiskFund ? "text-red-600" : "text-indigo-600")} />
                         <span className={cn("text-[10px] font-black uppercase tracking-widest", isHighRiskFund ? "text-red-700" : "text-indigo-700")}>
-                            资金对手盘情报 (Fund Intel)
+                            龙虎榜席位证据
                         </span>
                      </div>
                      {isHighRiskFund && (
@@ -184,7 +184,7 @@ export const StockProfileCard: React.FC<Props> = ({ stock }) => {
                 <p className={cn("text-xs font-bold leading-relaxed mb-4 relative z-10 italic", 
                     isTrap ? "text-red-100" :
                     isAmbush ? "text-indigo-100" : "text-slate-300")}>
-                    " {isTrap ? "TrapGuard 触发：监测到主力高位派发迹象，当前上涨极大可能为诱多。建议立即降低仓位，切勿追高。" : 
+                    " {isTrap ? "TrapGuard 触发：量价与筹码指标出现高位派发风险，当前上涨存在诱多风险。建议优先检查退出条件。" :
                        (stock.aiPrediction?.strategy || "基于当前情绪周期与筹码锁定度，建议在分时均线附近低吸介入，严控止损位。")} "
                 </p>
                 <div className="flex items-center justify-between relative z-10">

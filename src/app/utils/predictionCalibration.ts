@@ -2,7 +2,7 @@ import type { MarketPhase, Stock } from '../types';
 
 export type PredictionReliability = 'LOW' | 'MEDIUM' | 'HIGH';
 export type MarketRegime = 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
-export type CalibrationStatus = 'UNVALIDATED' | 'LIMITED' | 'OUT_OF_SAMPLE';
+export type CalibrationStatus = 'UNVALIDATED' | 'LIMITED' | 'WALK_FORWARD_PROXY';
 
 export interface MarketCalibrationContext {
   totalCount?: number;
@@ -51,6 +51,8 @@ export interface PredictionCalibrationResult {
   sampleSize: number;
   marketRegime: MarketRegime;
   marketDataQuality: number;
+  confidenceLow: number;
+  confidenceHigh: number;
   warnings: string[];
 }
 
@@ -199,7 +201,7 @@ export const getBuySignalVetoReason = ({
   if (direction !== 'UP') return '买入信号与方向预测冲突';
   if (!backtest || backtest.sampleSize < 10) return '有效样本不足10笔，禁止输出买入结论';
   if (backtest && (backtest.expectancy <= 0 || backtest.profitFactor < 1)) {
-    return '样本外历史代理验证未形成正期望';
+    return '滚动历史代理验证未形成正期望';
   }
   if (probability <= 50) return '校准后看涨概率未超过中性线';
   return undefined;
@@ -252,9 +254,8 @@ export const calibratePrediction = ({
   const marketRegime = classifyMarketRegime(marketContext, marketDataQuality);
   const raw = clamp(rawProbability, 5, 95);
   let calibrated = 50 + (raw - 50) * dataQuality;
-  const sampleSize = backtest?.sampleSize || 0;
-
   const canUseLongBacktest = direction === 'UP' && (signalType === 'BUY' || signalType === 'HOLD');
+  const sampleSize = canUseLongBacktest ? backtest?.sampleSize || 0 : 0;
   if (backtest && canUseLongBacktest && sampleSize >= 10) {
     const priorSamples = 20;
     const smoothedWinRate = (
@@ -269,6 +270,8 @@ export const calibratePrediction = ({
     }
   } else if (canUseLongBacktest) {
     warnings.push('有效历史样本少于10笔，不使用样本胜率抬高置信度。');
+  } else if (signalType === 'SELL' || direction === 'DOWN') {
+    warnings.push('卖出/看跌信号尚无专用滚动历史验证，当前仅作为风险管理规则，并由真实预测账本持续跟踪。');
   }
 
   const signalConflicts = (signalType === 'BUY' && direction !== 'UP') ||
@@ -356,7 +359,7 @@ export const calibratePrediction = ({
       ? 'MEDIUM'
       : 'LOW';
   const calibrationStatus: CalibrationStatus = sampleSize >= 30
-    ? 'OUT_OF_SAMPLE'
+    ? 'WALK_FORWARD_PROXY'
     : sampleSize >= 10
       ? 'LIMITED'
       : 'UNVALIDATED';
@@ -377,8 +380,13 @@ export const calibratePrediction = ({
     else if (reliability === 'HIGH') reliability = 'MEDIUM';
   }
 
+  const probability = Math.round(clamp(calibrated, 20, 85));
+  const uncertainty = sampleSize > 0
+    ? clamp(Math.round(196 * Math.sqrt(0.25 / (sampleSize + 20))), 6, 20)
+    : 20;
+
   return {
-    probability: Math.round(clamp(calibrated, 20, 85)),
+    probability,
     rawProbability: Math.round(raw),
     dataQuality: Math.round(dataQuality * 100),
     reliability,
@@ -396,6 +404,8 @@ export const calibratePrediction = ({
     sampleSize,
     marketRegime,
     marketDataQuality: Math.round(marketDataQuality * 100),
+    confidenceLow: clamp(probability - uncertainty, 5, 95),
+    confidenceHigh: clamp(probability + uncertainty, 5, 95),
     warnings,
   };
 };

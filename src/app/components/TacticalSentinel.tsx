@@ -37,7 +37,7 @@ export const TacticalSentinel: React.FC<Props> = React.memo(({ stocks, phase, ma
           priority: 'Critical',
           stockName: s.name,
           title: '量价严重背离',
-          description: '价格拉升但资金强度衰减，警惕主力高位对倒出货陷阱。',
+          description: '价格拉升但量能支持衰减，冲高回落风险上升；不能据此识别具体参与者。',
           time: new Date().toLocaleTimeString().slice(0, 5)
         });
       }
@@ -90,7 +90,7 @@ export const TacticalSentinel: React.FC<Props> = React.memo(({ stocks, phase, ma
                         <div>
                             <div className="text-[11px] font-black uppercase text-red-400 tracking-wider">全场流动性枯竭警报 (Global)</div>
                             <p className="text-[10px] text-red-100/70 leading-relaxed mt-1">
-                                市场成交极速萎缩，冰点期“杀高标”概率达 85%。严格控制仓位，禁止接力中位股。
+                                市场成交明显萎缩，冰点期高位股风险上升。严格控制仓位，避免在证据不足时接力。
                             </p>
                         </div>
                     </div>

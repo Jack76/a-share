@@ -61,7 +61,7 @@ test('sufficient positive evidence is Bayesian-smoothed instead of copied direct
   assert.equal(result.reliability, 'HIGH');
   assert.equal(result.dataReliability, 'HIGH');
   assert.equal(result.evidenceReliability, 'HIGH');
-  assert.equal(result.calibrationStatus, 'OUT_OF_SAMPLE');
+  assert.equal(result.calibrationStatus, 'WALK_FORWARD_PROXY');
 });
 
 test('negative historical expectancy prevents a bullish confidence above 50%', () => {

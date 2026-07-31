@@ -150,14 +150,17 @@ export const Trading: React.FC = () => {
                   <div className="space-y-2">
                       <div className="flex justify-between items-center text-xs">
                           <span className="text-muted-foreground">止损执行率</span>
-                          <span className="font-bold">100%</span>
+                          <span className="font-bold text-slate-500">尚未记录</span>
                       </div>
-                      <Progress value={100} className="h-1 bg-muted" />
+                      <Progress value={0} className="h-1 bg-muted" />
                       <div className="flex justify-between items-center text-xs">
                           <span className="text-muted-foreground">空仓等待耐心</span>
-                          <span className="font-bold text-orange-500">85%</span>
+                          <span className="font-bold text-slate-500">尚未记录</span>
                       </div>
-                      <Progress value={85} className="h-1 bg-muted" />
+                      <Progress value={0} className="h-1 bg-muted" />
+                      <p className="pt-1 text-[10px] leading-relaxed text-muted-foreground">
+                        需要真实交易日志后才能计算，系统不会用固定百分比代替行为统计。
+                      </p>
                   </div>
               </Card>
           </div>

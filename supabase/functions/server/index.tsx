@@ -176,73 +176,13 @@ api.get("/health", (c) => {
   return c.json({ status: "ok" });
 });
 
-// Load all trading data
-api.get("/data", async (c) => {
-  try {
-    const [stocks, themes, metrics, journal] = await Promise.all([
-      safeKvGet("trading:stocks"),
-      safeKvGet("trading:themes"),
-      safeKvGet("trading:metrics"),
-      safeKvGet("trading:journal"),
-    ]);
-
-    if (checkAbort(c)) return new Response(null, { status: 499 });
-
-    // Optimization: Always strip history from stocks before sending to client
-    // This prevents "Broken Pipe" errors caused by massive payloads (5MB+)
-    // The client is designed to re-fetch history if missing
-    const lightweightStocks = Array.isArray(stocks) 
-      ? stocks.map((s: any) => {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { history, ticks, ...rest } = s;
-          return rest;
-      })
-      : [];
-
-    if (checkAbort(c)) return new Response(null, { status: 499 });
-
-    return c.json({
-      stocks: lightweightStocks,
-      themes: themes || [],
-      metrics: metrics || null,
-      journal: journal || null,
-    });
-  } catch (error) {
-    return safeError(c, error);
-  }
-});
-
-// Save trading data (partial updates supported)
-api.post("/data", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { stocks, themes, metrics, journal } = body;
-    
-    const updates: Promise<void>[] = [];
-
-    if (stocks !== undefined) {
-      // Optimization: Strip heavy fields (history, ticks) before saving to KV
-      // This prevents KV timeouts and keeps the database lightweight
-      const lightweightStocks = Array.isArray(stocks) 
-        ? stocks.map((s: any) => {
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { history, ticks, ...rest } = s;
-            return rest;
-        })
-        : [];
-      updates.push(safeKvSet("trading:stocks", lightweightStocks));
-    }
-    if (themes !== undefined) updates.push(safeKvSet("trading:themes", themes));
-    if (metrics !== undefined) updates.push(safeKvSet("trading:metrics", metrics));
-    if (journal !== undefined) updates.push(safeKvSet("trading:journal", journal));
-
-    await Promise.all(updates);
-
-    return c.json({ status: "success" });
-  } catch (error) {
-    return safeError(c, error);
-  }
-});
+// Personal trading state is device-local. Keep the former shared routes closed
+// so old clients cannot read or recreate a public cross-user data bucket.
+const retiredTradingState = (c: any) => c.json({
+  error: "Trading state is stored on the current device only",
+}, 410);
+api.get("/data", retiredTradingState);
+api.post("/data", retiredTradingState);
 
 // Personal fund state is intentionally device-local. The earlier implementation
 // stored every visitor's portfolio under shared KV keys, allowing cross-user
