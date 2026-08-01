@@ -34,7 +34,7 @@ interface StockDiagnosisDialogProps {
 }
 
 export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOpen, onOpenChange, stock: initialStock, phase }) => {
-  const { analyzeLiveStockSignal } = useTrading();
+  const { analyzeLiveStockSignal, isMarketOpen } = useTrading();
   // V49.7 FIX: INITIALIZE WITH SNAPSHOT METRICS (防止闪烁)
   // Instead of starting with null (which forces Decoy=0), calculate metrics immediately from initialStock.
   // This ensures "Main Force Profit" is stable even before Ticks arrive.
@@ -59,6 +59,10 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
         let timer: ReturnType<typeof setTimeout> | null = null;
         
         const loadRealtimeData = async () => {
+             if (document.hidden) {
+               if (isMarketOpen) timer = setTimeout(loadRealtimeData, 15000);
+               return;
+             }
              try {
                const ticks = await fetchStockTicks(initialStock.code);
                if (!isMounted) return;
@@ -136,8 +140,8 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
              
                setStock(finalStock as Stock);
              } finally {
-               if (isMounted && !document.hidden) {
-                 timer = setTimeout(loadRealtimeData, 5000);
+               if (isMounted && isMarketOpen) {
+                 timer = setTimeout(loadRealtimeData, 10000);
                }
              }
         };
@@ -150,7 +154,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
     } else {
         setLocalMetrics(null);
     }
-  }, [analyzeLiveStockSignal, isOpen, initialStock?.code]);
+  }, [analyzeLiveStockSignal, isMarketOpen, isOpen, initialStock?.code]);
 
   if (!stock) return null;
 

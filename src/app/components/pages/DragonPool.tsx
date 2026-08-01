@@ -34,7 +34,13 @@ import { sanitizeAdvisoryLanguage } from '../../utils/advisoryLanguage';
 export const DragonPool: React.FC = () => {
   const { stocks, addStock, addStocks, updateStock, updateStocks, removeStock, refreshData, isMarketOpen, phase, forceRefreshHistory, analyzeLiveStockSignal } = useTrading();
   const processedRef = useRef<Set<string>>(new Set());
-  const velocityTracker = useRef<Map<string, { price: number, time: number, velocity: number }>>(new Map());
+  const velocityTracker = useRef<Map<string, {
+    price: number;
+    time: number;
+    velocity: number;
+    lastAnalyzedPrice?: number;
+    lastAnalyzedAt?: number;
+  }>>(new Map());
 
   // V10.0 Real-time Velocity & Signal Monitor
   // V65.1 PERF FIX: Break cascade loop that caused 4x recalculation per refresh.
@@ -50,7 +56,10 @@ export const DragonPool: React.FC = () => {
   updateStocksRef.current = updateStocks;
 
   useEffect(() => {
+    if (!isMarketOpen) return;
+
     const runVelocityPass = () => {
+      if (document.hidden) return;
       const currentStocks = stocksRefLocal.current;
       if (currentStocks.length === 0) return;
 
@@ -64,6 +73,8 @@ export const DragonPool: React.FC = () => {
       const pendingUpdates: { id: string; changes: Partial<Stock> }[] = [];
 
       keyStocks.forEach(stock => {
+        const currentPrice = Number(stock.currentPrice || 0);
+        if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
         const tracker = velocityTracker.current.get(stock.id);
         let currentVelocity = 0;
 
@@ -71,14 +82,26 @@ export const DragonPool: React.FC = () => {
           const timeDeltaMinutes = (now - tracker.time) / 60000;
           if (timeDeltaMinutes > 0.08) {
             const priceDeltaPercent = tracker.price > 0
-              ? ((stock.currentPrice - tracker.price) / tracker.price) * 100 : 0;
+              ? ((currentPrice - tracker.price) / tracker.price) * 100 : 0;
             currentVelocity = priceDeltaPercent / timeDeltaMinutes;
-            velocityTracker.current.set(stock.id, { price: stock.currentPrice, time: now, velocity: currentVelocity });
+            velocityTracker.current.set(stock.id, {
+              ...tracker,
+              price: currentPrice,
+              time: now,
+              velocity: currentVelocity,
+            });
           } else {
             currentVelocity = tracker.velocity;
           }
+
+          const lastAnalyzedPrice = tracker.lastAnalyzedPrice || tracker.price;
+          const changeSinceAnalysis = lastAnalyzedPrice > 0
+            ? Math.abs((currentPrice - lastAnalyzedPrice) / lastAnalyzedPrice) * 100
+            : 0;
+          const heartbeatDue = !tracker.lastAnalyzedAt || now - tracker.lastAnalyzedAt >= 30_000;
+          if (changeSinceAnalysis < 0.03 && !heartbeatDue) return;
         } else {
-          velocityTracker.current.set(stock.id, { price: stock.currentPrice, time: now, velocity: 0 });
+          velocityTracker.current.set(stock.id, { price: currentPrice, time: now, velocity: 0 });
           return; // First observation, skip analysis
         }
 
@@ -93,6 +116,14 @@ export const DragonPool: React.FC = () => {
         };
 
         const signal = analyzeLiveStockSignalRef.current(stock, currentVelocity, microContext);
+        const latestTracker = velocityTracker.current.get(stock.id);
+        if (latestTracker) {
+          velocityTracker.current.set(stock.id, {
+            ...latestTracker,
+            lastAnalyzedPrice: currentPrice,
+            lastAnalyzedAt: now,
+          });
+        }
 
         const oldScore = stock.stargate?.score || 0;
         const newScore = signal.stargate?.score || 0;
@@ -127,15 +158,16 @@ export const DragonPool: React.FC = () => {
       }
     };
 
-    // Initial run after 2s (let first render settle), then poll every 8s
+    // Initial run after 2s, then use a lightweight adaptive pass. Expensive
+    // signal analysis only runs after a meaningful price move or 30s heartbeat.
     const initialTimer = setTimeout(runVelocityPass, 2000);
-    velocityTimerRef.current = setInterval(runVelocityPass, 8000);
+    velocityTimerRef.current = setInterval(runVelocityPass, 12000);
 
     return () => {
       clearTimeout(initialTimer);
       if (velocityTimerRef.current) clearInterval(velocityTimerRef.current);
     };
-  }, [phase]); // V65.1: Only re-setup on phase change, NOT on stocks change
+  }, [phase, isMarketOpen]); // Stop the live scanner outside exchange hours.
 
   // V11.0: Real-time "Stealth Order" Toast Notifications
   // Listens for "GUARD" signal override (Ghost Protocol)

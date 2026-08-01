@@ -758,10 +758,17 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   useEffect(() => {
     if (isMarketOpen) {
-      // User Request: Refresh every 30 seconds during trading hours
-      // This reduces noise and aligns with the "Game Cycle" of large orders
-      const timer = setInterval(refreshData, 30000);
-      return () => clearInterval(timer);
+      // Refresh only while the page is visible. A hidden tab does not need to
+      // keep downloading and rescoring the same market snapshot.
+      const refreshWhenVisible = () => {
+        if (!document.hidden) void refreshData();
+      };
+      const timer = setInterval(refreshWhenVisible, 30000);
+      document.addEventListener('visibilitychange', refreshWhenVisible);
+      return () => {
+        clearInterval(timer);
+        document.removeEventListener('visibilitychange', refreshWhenVisible);
+      };
     }
   }, [isMarketOpen]);
 
@@ -1526,6 +1533,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const isFetchingHistoryRef = useRef(false);
   useEffect(() => {
     const fetchMissingHistory = () => {
+      if (document.hidden) return;
       const currentStocks = stocksRef.current;
       if (currentStocks.length === 0) return;
       if (isFetchingHistoryRef.current) return;
