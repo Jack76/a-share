@@ -124,7 +124,7 @@ const fetchWithRetry = async (url: string, options: RequestInit, retries = 2, ti
 export const searchStockByName = async (query: string): Promise<{ code: string, name: string } | null> => {
   if (!query || !projectId) return null;
 
-  const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/search?q=${encodeURIComponent(query)}`;
+  const url = `/api/market/search?q=${encodeURIComponent(query)}`;
   try {
     const resp = await fetchWithRetry(url, {
       headers: { 'Authorization': `Bearer ${publicAnonKey}` }
@@ -141,7 +141,7 @@ export const searchStockByName = async (query: string): Promise<{ code: string, 
 export const fetchRealTimeThemes = async (): Promise<Theme[]> => {
   if (!projectId) return [];
 
-  const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/themes`;
+  const url = '/api/market/themes';
   
   try {
     const resp = await fetchWithRetry(url, {
@@ -199,7 +199,7 @@ export const fetchIntradayBatch = async (
   if (formattedCodes.length === 0) return {};
   
   // Send all codes in one request (server already supports comma-separated codes)
-  const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/history?codes=${formattedCodes.join(',')}&period=${klt}`;
+  const url = `/api/market/history?codes=${formattedCodes.join(',')}&period=${klt}`;
   
   try {
     const resp = await fetchWithRetry(url, {
@@ -314,7 +314,7 @@ export const fetchStockHistoryBatch = async (codes: string[]): Promise<Record<st
     await Promise.all(wave.map(async (batchCodes) => {
         const list = batchCodes.join(',');
         // Request stock history data (default from backend)
-        const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/history?codes=${list}`;
+        const url = `/api/market/history?codes=${list}`;
 
         try {
             // 3. Timeout 90s (Increased from 60s for stability)
@@ -425,7 +425,7 @@ export const fetchFundHistoryBatch = async (codes: string[]): Promise<Record<str
         const list = batchCodes.join(',');
         // V8.1: Default history length
         // V10.0: Request 365 days for Annual Return calculation
-        const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/fund-history?codes=${list}&limit=365`;
+        const url = `/api/market/fund-history?codes=${list}&limit=365`;
 
         try {
             const resp = await fetchWithRetry(url, {
@@ -477,7 +477,7 @@ export const fetchStockTicks = async (code: string): Promise<any[]> => {
   const formattedCode = formatCode(code);
   // v7.2 Fix: Use standard query parameter format to match server route '/market/ticks'
   // Also switched from /stock/ticks/:code to /market/ticks?code=... for consistency
-  const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/ticks?code=${formattedCode}`;
+  const url = `/api/market/ticks?code=${formattedCode}`;
 
   try {
     const resp = await fetchWithRetry(url, {
@@ -531,7 +531,7 @@ export const fetchFunds = async (codes: string[], forceRefresh = false): Promise
 
   // Fetch batches in parallel
   await Promise.all(chunks.map(async (batchCodes) => {
-    const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/funds?codes=${batchCodes.join(',')}`;
+    const url = `/api/market/funds?codes=${batchCodes.join(',')}`;
 
     try {
       const resp = await fetchWithRetry(url, {
@@ -580,7 +580,7 @@ export type FundSearchResult = { code: string; name: string; type: string };
 export const searchFundByKeyword = async (keyword: string): Promise<FundSearchResult[]> => {
   if (!projectId || !keyword.trim()) return [];
   try {
-    const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/fund-search?q=${encodeURIComponent(keyword.trim())}`;
+    const url = `/api/market/fund-search?q=${encodeURIComponent(keyword.trim())}`;
     const resp = await fetchWithRetry(url, {
       headers: { 'Authorization': `Bearer ${publicAnonKey}` }
     }, 1, 10000, true);
@@ -641,7 +641,7 @@ export const fetchStockData = async (codes: string[], forceRefresh = false): Pro
 
   const formattedCodes = codes.map(formatCode).filter(c => c);
   const list = formattedCodes.join(',');
-  const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/stocks?codes=${list}`;
+  const url = `/api/market/stocks?codes=${list}`;
 
   const requestPromise = (async () => {
     try {
@@ -697,7 +697,7 @@ export const fetchMarketIndices = async (): Promise<{ data: MarketIndex[], isMoc
   const dedupeKey = 'market:indices';
   if (inFlightRequests.has(dedupeKey)) return inFlightRequests.get(dedupeKey);
 
-  const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/indices`;
+  const url = '/api/market/indices';
 
   const requestPromise = (async () => {
     try {
@@ -760,7 +760,7 @@ export const fetchMarketStats = async (includeList = false): Promise<MarketStats
     }
   }
 
-  const url = `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/stats${includeList ? '?includeList=true' : ''}`;
+  const url = `/api/market/stats${includeList ? '?includeList=true' : ''}`;
   const requestPromise = (async () => {
     try {
       const resp = await fetchWithRetry(url, {
@@ -797,7 +797,7 @@ export const fetchMarketHealth = async (): Promise<any | null> => {
   if (!projectId) return null;
   try {
     const resp = await fetchWithRetry(
-      `https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/health`,
+      '/api/market/health',
       { headers: { 'Authorization': `Bearer ${publicAnonKey}` } },
       0,
       5000,

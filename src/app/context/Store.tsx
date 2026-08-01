@@ -464,13 +464,35 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return marketStock?.largeOrderNetYuan !== undefined &&
         stock.largeOrderNetYuan !== marketStock.largeOrderNetYuan;
     });
-    if (!needsMarketRecalibration && !needsFlowHydration) return;
+    const needsQuoteHydration = marketMap.size > 0 && currentStocks.some(stock => {
+      const marketStock = marketMap.get(stock.code.replace(/^(sh|sz|bj)/, ''));
+      const marketPrice = Number(marketStock?.currentPrice);
+      if (!Number.isFinite(marketPrice) || marketPrice <= 0) return false;
+      return !Number.isFinite(stock.currentPrice) ||
+        stock.currentPrice <= 0 ||
+        stock.currentPrice !== marketPrice ||
+        stock.changePercent !== marketStock?.changePercent;
+    });
+    if (!needsMarketRecalibration && !needsFlowHydration && !needsQuoteHydration) return;
 
     const enrichedStocks = currentStocks.map(stock => {
       const marketStock = marketMap.get(stock.code.replace(/^(sh|sz|bj)/, ''));
       if (!marketStock) return stock;
+      const marketPrice = Number(marketStock.currentPrice);
+      const hasMarketQuote = Number.isFinite(marketPrice) && marketPrice > 0;
       return {
         ...stock,
+        ...(hasMarketQuote ? {
+          currentPrice: marketPrice,
+          changePercent: marketStock.changePercent,
+          turnover: marketStock.amount,
+          turnoverRate: marketStock.turnoverRate,
+          limitUpPrice: marketStock.limitUpPrice,
+          limitDownPrice: marketStock.limitDownPrice,
+          isLimitUp: Boolean(marketStock.isLimitUp),
+          isLimitDown: Boolean(marketStock.isLimitDown),
+          sourceAsOf: marketStats.quality?.sourceAsOf || stock.sourceAsOf,
+        } : {}),
         largeOrderNetYuan: marketStock.largeOrderNetYuan,
         largeOrderNetSource: marketStock.largeOrderNetSource,
         largeOrderNetAsOf: marketStock.largeOrderNetAsOf,
@@ -940,6 +962,13 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             ? { ...stock, ...priorityQuotes[stock.code] }
             : stock
           );
+
+          // Commit the first quote wave immediately. Waiting for the remaining
+          // history, scanner and intraday enrichment requests kept valid prices
+          // hidden for tens of seconds and allowed later polling passes to keep
+          // rendering the original empty preset values.
+          stocksRef.current = nextStocks;
+          setStocks(nextStocks);
 
           // v8.0 全市场扫描补全：自动发现所有涨停/跌停/高标股
           // 确保连板天梯、龙头雷达和风险预警基于全市场数据，消除幸存者偏差

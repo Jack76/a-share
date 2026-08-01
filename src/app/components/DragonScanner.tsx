@@ -57,7 +57,7 @@ export function DragonScanner() {
             // Only validate the top 4 to save bandwidth
             for (const stock of tacticalOpportunities.slice(0, 4)) {
                 try {
-                    const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/market/validate-signal`, {
+                    const response = await fetch('/api/market/validate-signal', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',

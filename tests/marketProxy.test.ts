@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+const readSource = (path: string) => readFile(new URL(path, import.meta.url), 'utf8');
+
+test('browser market requests use the same-origin worker proxy', async () => {
+  const [marketData, worker, viteConfig] = await Promise.all([
+    readSource('../src/app/services/marketData.ts'),
+    readSource('../worker/index.ts'),
+    readSource('../vite.config.ts'),
+  ]);
+
+  assert.doesNotMatch(marketData, /supabase\.co\/functions\/v1/);
+  assert.match(marketData, /['"`]\/api\/market\//);
+  assert.match(worker, /pathname\.startsWith\('\/api\/market\/'\)/);
+  assert.match(worker, /pathname\.startsWith\('\/api\/trade\/'\)/);
+  assert.match(viteConfig, /run_worker_first:\s*true/);
+});
+
+test('the first quote wave is committed before slower enrichment finishes', async () => {
+  const store = await readSource('../src/app/context/Store.tsx');
+
+  assert.match(
+    store,
+    /stocksRef\.current = nextStocks;\s*setStocks\(nextStocks\);/,
+  );
+});

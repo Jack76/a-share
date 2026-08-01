@@ -43,7 +43,7 @@ export const HoldingsDiagnosis: React.FC = () => {
         
         for (const stock of heldStocks) {
             try {
-                const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-545d7fd7/trade/harvest-protocol`, {
+                const response = await fetch('/api/trade/harvest-protocol', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
