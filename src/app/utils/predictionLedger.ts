@@ -2,7 +2,7 @@ import type { Stock } from '../types.ts';
 import { getChinaTradingClock } from './marketClock.ts';
 
 export const PREDICTION_LEDGER_KEY = 'dragon-quant-prediction-ledger-v1';
-export const PREDICTION_MODEL_VERSION = 'predator-rules-v69.0';
+export const PREDICTION_MODEL_VERSION = 'predator-rules-v69.1';
 
 export interface PredictionLedgerEntry {
   id: string;

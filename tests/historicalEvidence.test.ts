@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildHistoricalPatternEvidence } from '../src/app/utils/historicalEvidence.ts';
+import {
+  buildHistoricalPatternEvidence,
+  clearHistoricalEvidenceCache,
+  getHistoricalEvidenceCacheStats,
+} from '../src/app/utils/historicalEvidence.ts';
 
 const makeHistory = (phaseOffset = 0) => {
   const start = Date.UTC(2024, 0, 1);
@@ -36,6 +40,7 @@ const makeStock = (code: string, concept: string, phaseOffset = 0) => ({
 });
 
 test('exit evidence evaluates several holding horizons with hierarchical samples', () => {
+  clearHistoricalEvidenceCache();
   const stock = makeStock('600001', '人工智能', 0);
   const sameSector = makeStock('600002', '人工智能', 3);
   const poolPeer = makeStock('600003', '机器人', 7);
@@ -60,6 +65,7 @@ test('exit evidence evaluates several holding horizons with hierarchical samples
 });
 
 test('long evidence uses cross-sectional expanding-window validation', () => {
+  clearHistoricalEvidenceCache();
   const stock = makeStock('600011', '算力', 0);
   const peer = makeStock('600012', '算力', 5);
   const result = buildHistoricalPatternEvidence({
@@ -76,4 +82,29 @@ test('long evidence uses cross-sectional expanding-window validation', () => {
   assert.ok(result.optimalStopMult >= 1 && result.optimalStopMult <= 2.5);
   assert.ok(Number.isFinite(result.expectancy));
   assert.ok(Number.isFinite(result.profitFactor));
+});
+
+test('unchanged histories reuse bounded evidence caches across live recalculations', () => {
+  clearHistoricalEvidenceCache();
+  const stock = makeStock('600021', '算力', 0);
+  const peers = [makeStock('600022', '算力', 4), makeStock('600023', '机器人', 8)];
+  const input = {
+    stock,
+    peerStocks: peers,
+    signalTitle: '回踩等待',
+    direction: 'LONG' as const,
+    marketRegime: 'NEUTRAL' as const,
+  };
+
+  const first = buildHistoricalPatternEvidence(input);
+  const afterFirst = getHistoricalEvidenceCacheStats();
+  const second = buildHistoricalPatternEvidence(input);
+  const afterSecond = getHistoricalEvidenceCacheStats();
+
+  assert.deepEqual(second, first);
+  assert.equal(afterFirst.misses, 1);
+  assert.equal(afterSecond.misses, 1);
+  assert.equal(afterSecond.hits, 1);
+  assert.ok(afterFirst.rawMisses > 0);
+  assert.equal(afterSecond.rawMisses, afterFirst.rawMisses);
 });

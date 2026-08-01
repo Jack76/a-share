@@ -2563,10 +2563,12 @@ export const analyzeStockSignal = (
       direction: evidenceDirection,
       marketRegime: resolveMarketRegime(marketContext),
     });
-    // Exit evidence has a different outcome definition (avoided loss versus
-    // continuing to hold), so it must never fall back to the legacy long model.
-    if (regimeAwareEvidence || evidenceDirection === 'EXIT') return regimeAwareEvidence;
+    // A cache hit may intentionally be null when evidence is insufficient.
+    // Returning it directly prevents the retired single-stock engine from
+    // rebuilding the same 600-bar scan on every live tick or interaction.
+    return regimeAwareEvidence;
 
+    /* c8 ignore start -- retained temporarily for saved-data compatibility */
     const hist = stock.history;
     if (!hist || hist.length < 30) return null;
     
@@ -2767,6 +2769,7 @@ export const analyzeStockSignal = (
       profitFactor: Math.round(validation.profitFactor * 100) / 100,
       expectancy: Math.round(validation.expectancy * 100) / 100,
     };
+    /* c8 ignore stop */
   };
 
   // ═══════════════════════════════════════════════════════════════════════════

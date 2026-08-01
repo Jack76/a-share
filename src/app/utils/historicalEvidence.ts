@@ -52,6 +52,21 @@ interface HistoricalSetup {
   weight: number;
 }
 
+type RawHistoricalSetup = Omit<HistoricalSetup, 'level' | 'weight'>;
+
+type HistoricalPatternKey =
+  | 'WTS'
+  | 'BOOMERANG'
+  | 'SUCK'
+  | 'AMBUSH'
+  | 'SNIPER'
+  | 'ASSAULT'
+  | 'GENERIC_LONG'
+  | 'TAKE_PROFIT'
+  | 'RISK_EXIT'
+  | 'DISTRIBUTION_EXIT'
+  | 'GENERIC_EXIT';
+
 interface WeightedTrade {
   pctReturn: number;
   weight: number;
@@ -59,6 +74,43 @@ interface WeightedTrade {
   regime: MarketRegime;
   isRecent: boolean;
 }
+
+const RESULT_CACHE_LIMIT = 240;
+let normalizedHistoryCache = new WeakMap<object, HistoricalBar[]>();
+let rawSetupCache = new WeakMap<object, Map<string, RawHistoricalSetup[]>>();
+const resultCache = new Map<string, HistoricalPatternEvidence | null>();
+const cacheStats = { hits: 0, misses: 0, rawHits: 0, rawMisses: 0 };
+
+export const clearHistoricalEvidenceCache = () => {
+  normalizedHistoryCache = new WeakMap<object, HistoricalBar[]>();
+  rawSetupCache = new WeakMap<object, Map<string, RawHistoricalSetup[]>>();
+  resultCache.clear();
+  cacheStats.hits = 0;
+  cacheStats.misses = 0;
+  cacheStats.rawHits = 0;
+  cacheStats.rawMisses = 0;
+};
+
+export const getHistoricalEvidenceCacheStats = () => ({ ...cacheStats, size: resultCache.size });
+
+const readCachedResult = (key: string) => {
+  if (!resultCache.has(key)) return { found: false as const, value: null };
+  const value = resultCache.get(key) ?? null;
+  resultCache.delete(key);
+  resultCache.set(key, value);
+  cacheStats.hits++;
+  return { found: true as const, value };
+};
+
+const writeCachedResult = (key: string, value: HistoricalPatternEvidence | null) => {
+  resultCache.set(key, value);
+  while (resultCache.size > RESULT_CACHE_LIMIT) {
+    const oldestKey = resultCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    resultCache.delete(oldestKey);
+  }
+  return value;
+};
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
@@ -75,8 +127,11 @@ const sma = (values: number[], period: number, endIndex: number): number => {
   return total / period;
 };
 
-const normalizeHistory = (stock: Stock): HistoricalBar[] => (stock.history || [])
-  .map(bar => {
+const normalizeHistory = (stock: Stock): HistoricalBar[] => {
+  const source = stock.history || [];
+  const cached = normalizedHistoryCache.get(source);
+  if (cached) return cached;
+  const normalized = source.map(bar => {
     const close = Number(bar.close);
     const open = Number(bar.open ?? close);
     const high = Number(bar.high ?? close);
@@ -92,6 +147,29 @@ const normalizeHistory = (stock: Stock): HistoricalBar[] => (stock.history || []
     Number.isFinite(bar.close) && bar.close > 0
   )
   .sort((a, b) => a.day.localeCompare(b.day));
+  normalizedHistoryCache.set(source, normalized);
+  return normalized;
+};
+
+const resolvePatternKey = (
+  signalTitle: string,
+  direction: HistoricalEvidenceDirection,
+): HistoricalPatternKey => {
+  const title = signalTitle.toLowerCase();
+  if (direction === 'LONG') {
+    if (title.includes('弱转强') || title.includes('wts')) return 'WTS';
+    if (title.includes('回马枪') || title.includes('return')) return 'BOOMERANG';
+    if (title.includes('低吸') || title.includes('suck')) return 'SUCK';
+    if (title.includes('伏击') || title.includes('ambush')) return 'AMBUSH';
+    if (title.includes('狙击') || title.includes('sniper')) return 'SNIPER';
+    if (title.includes('突击') || title.includes('assault')) return 'ASSAULT';
+    return 'GENERIC_LONG';
+  }
+  if (/止盈|兑现|顶部|过热|冲高|鱼尾|逃顶/.test(title)) return 'TAKE_PROFIT';
+  if (/止损|破位|死叉|雪崩|核按钮|风险|撤退/.test(title)) return 'RISK_EXIT';
+  if (/出货|派发|砸盘|诱多|埋人|烂板|炸板/.test(title)) return 'DISTRIBUTION_EXIT';
+  return 'GENERIC_EXIT';
+};
 
 const calculateAtr = (bars: HistoricalBar[], index: number, period = 14): number => {
   if (index < period) return bars[index].close * 0.03;
@@ -158,13 +236,13 @@ const resolveSampleLevel = (target: Stock, candidate: Stock): HistoricalSampleLe
 };
 
 const isLongPatternTriggered = ({
-  signalTitle,
+  pattern,
   closes,
   volumes,
   bars,
   index,
 }: {
-  signalTitle: string;
+  pattern: HistoricalPatternKey;
   closes: number[];
   volumes: number[];
   bars: HistoricalBar[];
@@ -179,33 +257,25 @@ const isLongPatternTriggered = ({
   const averageVolume5 = sma(volumes, 5, index);
   const isVolumeShrink = averageVolume5 > 0 && bars[index].volume < averageVolume5 * 0.7;
   const isVolumeHeavy = averageVolume5 > 0 && bars[index].volume > averageVolume5 * 1.5;
-  const title = signalTitle.toLowerCase();
-  const isWts = title.includes('弱转强') || title.includes('wts');
-  const isBoomerang = title.includes('回马枪') || title.includes('return');
-  const isSuck = title.includes('低吸') || title.includes('suck');
-  const isAmbush = title.includes('伏击') || title.includes('ambush');
-  const isSniper = title.includes('狙击') || title.includes('sniper');
-  const isAssault = title.includes('突击') || title.includes('assault');
-
-  if (isWts) return previous < closes[Math.max(0, index - 2)] && change > 0.02 && current > ma5;
-  if (isBoomerang) return previous < sma(closes, 20, index - 1) && current > ma5 && change > 0.03;
-  if (isSuck) return ma20 > 0 && Math.abs(current - ma20) / ma20 < 0.02 && isVolumeShrink;
-  if (isAmbush) {
+  if (pattern === 'WTS') return previous < closes[Math.max(0, index - 2)] && change > 0.02 && current > ma5;
+  if (pattern === 'BOOMERANG') return previous < sma(closes, 20, index - 1) && current > ma5 && change > 0.03;
+  if (pattern === 'SUCK') return ma20 > 0 && Math.abs(current - ma20) / ma20 < 0.02 && isVolumeShrink;
+  if (pattern === 'AMBUSH') {
     return closes[index - 3] > closes[index - 2] && closes[index - 2] > previous && change > 0 && isVolumeHeavy;
   }
-  if (isSniper) return ma5 > ma10 && ma10 > ma20 && current > ma5 * 0.99 && current < ma5 * 1.01;
-  if (isAssault) return previous < sma(closes, 10, index - 1) && current > ma10 && isVolumeHeavy;
+  if (pattern === 'SNIPER') return ma5 > ma10 && ma10 > ma20 && current > ma5 * 0.99 && current < ma5 * 1.01;
+  if (pattern === 'ASSAULT') return previous < sma(closes, 10, index - 1) && current > ma10 && isVolumeHeavy;
   return ma10 > 0 && Math.abs(current - ma10) / ma10 < 0.015 && change > 0;
 };
 
 const isExitPatternTriggered = ({
-  signalTitle,
+  pattern,
   closes,
   volumes,
   bars,
   index,
 }: {
-  signalTitle: string;
+  pattern: HistoricalPatternKey;
   closes: number[];
   volumes: number[];
   bars: HistoricalBar[];
@@ -226,39 +296,41 @@ const isExitPatternTriggered = ({
   const distribution = change < 0 && bars[index].close < bars[index].open && isVolumeHeavy;
   const topReversal = recentHigh > 0 && current >= recentHigh * 0.95 && change < -0.01;
   const hardDrop = change <= -0.025;
-  const title = signalTitle.toLowerCase();
-
-  if (/止盈|兑现|顶部|过热|冲高|鱼尾|逃顶/.test(title)) return topReversal || distribution;
-  if (/止损|破位|死叉|雪崩|核按钮|风险|撤退/.test(title)) return trendBreak || deeperTrendBreak || hardDrop;
-  if (/出货|派发|砸盘|诱多|埋人|烂板|炸板/.test(title)) return distribution || hardDrop || topReversal;
+  if (pattern === 'TAKE_PROFIT') return topReversal || distribution;
+  if (pattern === 'RISK_EXIT') return trendBreak || deeperTrendBreak || hardDrop;
+  if (pattern === 'DISTRIBUTION_EXIT') return distribution || hardDrop || topReversal;
   return trendBreak || deeperTrendBreak || distribution || topReversal || hardDrop;
 };
 
-const collectSetups = ({
-  target,
+const collectRawSetups = ({
   candidate,
-  signalTitle,
+  pattern,
   direction,
-  currentRegime,
 }: {
-  target: Stock;
   candidate: Stock;
-  signalTitle: string;
+  pattern: HistoricalPatternKey;
   direction: HistoricalEvidenceDirection;
-  currentRegime: MarketRegime;
-}): HistoricalSetup[] => {
+}): RawHistoricalSetup[] => {
+  const historySource = candidate.history || [];
+  const rawCacheKey = `${candidate.code}:${candidate.name}:${direction}:${pattern}`;
+  const historyCache = rawSetupCache.get(historySource);
+  const cached = historyCache?.get(rawCacheKey);
+  if (cached) {
+    cacheStats.rawHits++;
+    return cached.map(setup => ({ ...setup, stock: candidate }));
+  }
+  cacheStats.rawMisses++;
   const bars = normalizeHistory(candidate);
   if (bars.length < 30) return [];
   const closes = bars.map(bar => bar.close);
   const volumes = bars.map(bar => bar.volume);
-  const level = resolveSampleLevel(target, candidate);
-  const setups: HistoricalSetup[] = [];
+  const setups: RawHistoricalSetup[] = [];
   const requiredFutureBars = direction === 'LONG' ? 11 : 6;
 
   for (let index = 20; index < bars.length - requiredFutureBars; index++) {
     const triggered = direction === 'LONG'
-      ? isLongPatternTriggered({ signalTitle, closes, volumes, bars, index })
-      : isExitPatternTriggered({ signalTitle, closes, volumes, bars, index });
+      ? isLongPatternTriggered({ pattern, closes, volumes, bars, index })
+      : isExitPatternTriggered({ pattern, closes, volumes, bars, index });
     if (!triggered) continue;
 
     const entryIndex = index + 1;
@@ -270,7 +342,6 @@ const collectSetups = ({
     }
 
     const regime = classifyHistoricalRegime(closes, bars, index);
-    const barsSinceSignal = bars.length - 1 - index;
     setups.push({
       stock: candidate,
       bars,
@@ -280,8 +351,6 @@ const collectSetups = ({
       localAtr: calculateAtr(bars, index),
       day: bars[index].day,
       regime,
-      level,
-      weight: sampleLevelWeight[level] * regimeWeight(regime, currentRegime) * recencyWeight(barsSinceSignal),
     });
 
     // Keep observations independent within a stock. A signal cannot create
@@ -289,7 +358,33 @@ const collectSetups = ({
     index += direction === 'LONG' ? 10 : 5;
   }
 
+  const nextHistoryCache = historyCache || new Map<string, RawHistoricalSetup[]>();
+  nextHistoryCache.set(rawCacheKey, setups);
+  if (!historyCache) rawSetupCache.set(historySource, nextHistoryCache);
   return setups;
+};
+
+const collectSetups = ({
+  target,
+  candidate,
+  pattern,
+  direction,
+  currentRegime,
+}: {
+  target: Stock;
+  candidate: Stock;
+  pattern: HistoricalPatternKey;
+  direction: HistoricalEvidenceDirection;
+  currentRegime: MarketRegime;
+}): HistoricalSetup[] => {
+  const level = resolveSampleLevel(target, candidate);
+  return collectRawSetups({ candidate, pattern, direction }).map(setup => ({
+    ...setup,
+    stock: candidate,
+    level,
+    weight: sampleLevelWeight[level] * regimeWeight(setup.regime, currentRegime) *
+      recencyWeight(setup.bars.length - 1 - setup.signalIndex),
+  }));
 };
 
 const simulateLongTrade = (setup: HistoricalSetup, stopMult: number) => {
@@ -376,22 +471,60 @@ export const buildHistoricalPatternEvidence = ({
   direction: HistoricalEvidenceDirection;
   marketRegime: MarketRegime;
 }): HistoricalPatternEvidence | null => {
+  const pattern = resolvePatternKey(signalTitle, direction);
+  const eligiblePeers = peerStocks.filter(candidate =>
+    candidate.code !== stock.code && (candidate.history?.length || 0) >= 30
+  );
+  const sectorPeers = eligiblePeers.filter(candidate =>
+    Boolean(stock.concept && candidate.concept === stock.concept)
+  );
+  const poolPeers = eligiblePeers.filter(candidate =>
+    !stock.concept || candidate.concept !== stock.concept
+  );
   const uniqueCandidates = [...new Map(
-    [stock, ...peerStocks]
+    [stock, ...sectorPeers.slice(0, 8), ...poolPeers.slice(0, 8)]
       .filter(candidate => (candidate.history?.length || 0) >= 30)
-      .slice(0, 30)
       .map(candidate => [candidate.code, candidate]),
   ).values()];
+  const universeFingerprint = uniqueCandidates
+    .map(candidate => {
+      const history = candidate.history || [];
+      const first = history[0];
+      const last = history.at(-1);
+      return [
+        candidate.code,
+        candidate.name,
+        candidate.concept || '',
+        history.length,
+        first?.day || '',
+        last?.day || '',
+        Number(last?.close || 0).toFixed(4),
+      ].join(':');
+    })
+    .sort()
+    .join('|');
+  const resultCacheKey = [
+    stock.code,
+    stock.concept || '',
+    direction,
+    pattern,
+    marketRegime,
+    universeFingerprint,
+  ].join('::');
+  const cachedResult = readCachedResult(resultCacheKey);
+  if (cachedResult.found) return cachedResult.value;
+  cacheStats.misses++;
+
   const setups = uniqueCandidates
     .flatMap(candidate => collectSetups({
       target: stock,
       candidate,
-      signalTitle,
+      pattern,
       direction,
       currentRegime: marketRegime,
     }))
     .sort((a, b) => a.day.localeCompare(b.day) || a.stock.code.localeCompare(b.stock.code));
-  if (setups.length < 10) return null;
+  if (setups.length < 10) return writeCachedResult(resultCacheKey, null);
 
   let trades: WeightedTrade[] = [];
   let optimalStopMult = 0;
@@ -458,9 +591,9 @@ export const buildHistoricalPatternEvidence = ({
     trades = setups.map(setup => toWeightedTrade(setup, simulateExitTrade(setup, 5)));
   }
 
-  if (trades.length < 10) return null;
+  if (trades.length < 10) return writeCachedResult(resultCacheKey, null);
   const summary = summarizeWeightedTrades(trades);
-  if (summary.sampleSize < 3) return null;
+  if (summary.sampleSize < 3) return writeCachedResult(resultCacheKey, null);
   const countLevel = (level: HistoricalSampleLevel) => trades.filter(trade => trade.level === level).length;
   const horizonEvidence = direction === 'EXIT'
     ? [1, 3, 5, 10].map(horizonDays => {
@@ -477,7 +610,7 @@ export const buildHistoricalPatternEvidence = ({
       })
     : undefined;
 
-  return {
+  return writeCachedResult(resultCacheKey, {
     sampleSize: summary.sampleSize,
     winRate: round(summary.winRate, 1),
     avgWinPct: round(summary.avgWinPct, 2),
@@ -497,5 +630,5 @@ export const buildHistoricalPatternEvidence = ({
     recentSampleShare: round(summary.recentSampleShare * 100, 1),
     horizonDays: direction === 'EXIT' ? 5 : 10,
     horizonEvidence,
-  };
+  });
 };
