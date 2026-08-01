@@ -1449,6 +1449,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   const diagnosisRiskSignal = ['出逃', '止损', '诱多', '埋人', '核按钮', '烂板', '炸板', '拉高出货', '离场', '撤退', '天量', '避险', '风险', '陷阱']
       .some(keyword => signal.title.includes(keyword));
   const predictionSignalType = stock.aiPrediction?.signalType;
+  const historicalBacktest = stock.aiPrediction?.smartEntry?.backtest;
   const isPositionManagementSignal = predictionSignalType === 'SELL' || predictionSignalType === 'HOLD';
 
   // Explicit engine exits must remain visible even when bullish evidence is
@@ -1759,6 +1760,30 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                             <div className="mt-1 text-sm font-semibold leading-6 text-slate-700">{exitTimingCopy.instruction}</div>
                         </div>
                     </div>
+                    {historicalBacktest?.direction === 'EXIT' && (
+                        <div className="border-t border-slate-100 px-4 py-3 md:px-6">
+                            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                    <div className="text-[10px] font-black tracking-wider text-slate-500">卖出历史代理 · 继续持有对照</div>
+                                    <div className="mt-1 text-xs font-semibold text-slate-700">
+                                        5日有效样本 {historicalBacktest.sampleSize} 笔，规避下跌命中 {historicalBacktest.winRate.toFixed(1)}%，
+                                        持有差值 {historicalBacktest.expectancy > 0 ? '+' : ''}{historicalBacktest.expectancy.toFixed(2)}%
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-bold text-slate-500">
+                                    {historicalBacktest.horizonEvidence?.map(item => (
+                                        <span key={item.horizonDays}>
+                                            {item.horizonDays}日 {item.winRate.toFixed(0)}%
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="mt-2 text-[9px] leading-4 text-slate-400">
+                                历史状态代理直接样本 {historicalBacktest.exactRegimeSampleSize || 0}/{historicalBacktest.totalSampleSize || 0}；
+                                近120日权重占比 {historicalBacktest.recentSampleShare?.toFixed(0) || 0}%。正值表示卖出相对继续持有减少了后续损失，并不代表可做空收益。
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* V60.0: Smart Entry - 条件单建议 */}
@@ -1978,7 +2003,7 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                 {se.backtest && se.backtest.sampleSize >= 10 && (
                                     <div className="mt-3 p-3 rounded-xl bg-purple-50/60 border border-purple-100/50">
                                         <div className="flex items-center justify-between mb-2">
-                                            <div className="text-[9px] font-black text-purple-400 uppercase tracking-widest">样本外代理验证 ({se.backtest.sampleSize}笔)</div>
+                                            <div className="text-[9px] font-black text-purple-400 uppercase tracking-widest">分层样本外代理 ({se.backtest.sampleSize}笔)</div>
                                             <span className={cn("text-[10px] font-black px-2 py-0.5 rounded-full",
                                                 se.backtest.winRate >= 60 ? "bg-emerald-100 text-emerald-700" :
                                                 se.backtest.winRate >= 45 ? "bg-amber-100 text-amber-700" :
@@ -2017,6 +2042,11 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                                                 </div>
                                             </div>
                                         </div>
+                                        {se.backtest.validationType === 'REGIME_WEIGHTED_WALK_FORWARD' && (
+                                            <div className="mt-2 text-[8px] leading-4 text-purple-500/80">
+                                                历史状态代理 {se.backtest.exactRegimeSampleSize || 0} 笔 · 个股 {se.backtest.ownStockSampleSize || 0} · 同题材 {se.backtest.sectorSampleSize || 0} · 候选池 {se.backtest.poolSampleSize || 0} · 近120日权重 {se.backtest.recentSampleShare?.toFixed(0) || 0}%
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                                 

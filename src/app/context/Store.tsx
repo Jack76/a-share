@@ -296,6 +296,8 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       microContext,
       intentContext,
       eventDrivenMode || undefined,
+      undefined,
+      stocksRef.current,
     );
   }, [eventDrivenMode, indexTechnicals, isMarketOpen, marketIndices, marketStats, marketThemes, metrics.phaseConfidence]);
 
@@ -394,6 +396,8 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             hasMicroData ? microContext : undefined,     // V65.0: microContext (was undefined)
             undefined,                                  // intentContext
             eventDrivenDetection,                       // V64.0 event-driven context
+            undefined,                                  // runtimeContext
+            updated,                                    // 分层历史样本池
         );
         
         const prediction = {

@@ -79,6 +79,33 @@ test('negative historical expectancy prevents a bullish confidence above 50%', (
   assert.match(result.warnings.join(' '), /未形成正期望/);
 });
 
+test('dedicated exit history calibrates a bearish sell prediction', () => {
+  const result = calibratePrediction({
+    stock: highQualityStock as any,
+    phase: 'Ebb',
+    rawProbability: 78,
+    direction: 'DOWN',
+    signalType: 'SELL',
+    trapDetected: false,
+    backtest: {
+      direction: 'EXIT',
+      sampleSize: 35,
+      winRate: 68,
+      profitFactor: 1.4,
+      expectancy: 0.8,
+      exactRegimeSampleSize: 18,
+      totalSampleSize: 52,
+      recentSampleShare: 55,
+    },
+  });
+
+  assert.equal(result.sampleSize, 35);
+  assert.equal(result.evidenceReliability, 'HIGH');
+  assert.equal(result.calibrationStatus, 'WALK_FORWARD_PROXY');
+  assert.ok(result.probability > 50);
+  assert.doesNotMatch(result.warnings.join(' '), /尚无专用滚动历史验证/);
+});
+
 test('conflicting signal and predicted direction are downgraded', () => {
   const result = calibratePrediction({
     stock: highQualityStock as any,

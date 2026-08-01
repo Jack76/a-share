@@ -25,6 +25,11 @@ export interface BacktestEvidence {
   winRate: number;
   profitFactor: number;
   expectancy: number;
+  direction?: 'LONG' | 'EXIT';
+  exactRegimeSampleSize?: number;
+  totalSampleSize?: number;
+  effectiveSampleSize?: number;
+  recentSampleShare?: number;
 }
 
 export interface PredictionCalibrationInput {
@@ -151,6 +156,10 @@ const classifyMarketRegime = (
   return 'NEUTRAL';
 };
 
+export const resolveMarketRegime = (
+  context?: MarketCalibrationContext,
+): MarketRegime => classifyMarketRegime(context, calculateMarketDataQuality(context));
+
 export const isActionableBullishPrediction = (
   prediction?: ActionablePrediction,
   minimumProbability = 70,
@@ -254,9 +263,15 @@ export const calibratePrediction = ({
   const marketRegime = classifyMarketRegime(marketContext, marketDataQuality);
   const raw = clamp(rawProbability, 5, 95);
   let calibrated = 50 + (raw - 50) * dataQuality;
-  const canUseLongBacktest = direction === 'UP' && (signalType === 'BUY' || signalType === 'HOLD');
-  const sampleSize = canUseLongBacktest ? backtest?.sampleSize || 0 : 0;
-  if (backtest && canUseLongBacktest && sampleSize >= 10) {
+  const canUseLongBacktest = direction === 'UP' &&
+    (signalType === 'BUY' || signalType === 'HOLD') &&
+    backtest?.direction !== 'EXIT';
+  const canUseExitBacktest = direction === 'DOWN' &&
+    (signalType === 'SELL' || signalType === 'HOLD' || signalType === 'WAIT') &&
+    backtest?.direction === 'EXIT';
+  const canUseDirectionalBacktest = canUseLongBacktest || canUseExitBacktest;
+  const sampleSize = canUseDirectionalBacktest ? backtest?.sampleSize || 0 : 0;
+  if (backtest && canUseDirectionalBacktest && sampleSize >= 10) {
     const priorSamples = 20;
     const smoothedWinRate = (
       backtest.winRate * sampleSize + 50 * priorSamples
@@ -268,10 +283,16 @@ export const calibratePrediction = ({
       calibrated = Math.min(calibrated, 50);
       warnings.push('同类历史交易未形成正期望，置信度已封顶。');
     }
-  } else if (canUseLongBacktest) {
+    if ((backtest.exactRegimeSampleSize || 0) < 10 && backtest.totalSampleSize) {
+      warnings.push('当前行情状态代理的直接样本偏少，已用同题材与候选池样本分层收缩。');
+    }
+    if ((backtest.recentSampleShare || 0) < 35 && backtest.totalSampleSize) {
+      warnings.push('近期样本占比较低，历史证据已按时间衰减降权。');
+    }
+  } else if (canUseLongBacktest || canUseExitBacktest) {
     warnings.push('有效历史样本少于10笔，不使用样本胜率抬高置信度。');
   } else if (signalType === 'SELL' || direction === 'DOWN') {
-    warnings.push('卖出/看跌信号尚无专用滚动历史验证，当前仅作为风险管理规则，并由真实预测账本持续跟踪。');
+    warnings.push('卖出/看跌信号未形成足够的专用历史样本，当前仅作为风险管理规则，并由真实预测账本持续跟踪。');
   }
 
   const signalConflicts = (signalType === 'BUY' && direction !== 'UP') ||

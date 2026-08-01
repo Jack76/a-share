@@ -8,6 +8,7 @@ import { getTransmissionSpeed, type TransmissionSpeed, type EventDrivenDetection
 import {
   calibratePrediction,
   getBuySignalVetoReason,
+  resolveMarketRegime,
   type MarketCalibrationContext,
   type PredictionReliability,
   type CalibrationStatus,
@@ -15,6 +16,7 @@ import {
 import { calculateLimitState, resolveLimitPercent } from '../../shared/marketRules';
 import { getChinaTradingClock, type MarketTimestamp } from './marketClock';
 import { assessCapitalFlow } from './capitalFlow';
+import { buildHistoricalPatternEvidence } from './historicalEvidence';
 
 export interface EngineRuntimeContext {
   timestamp: MarketTimestamp;
@@ -59,6 +61,18 @@ export interface PredatorSignal {
       optimalStopMult: number;  // 最优ATR止损倍数
       profitFactor: number;     // 盈亏比因子
       expectancy: number;       // 期望值 (每笔期望收益%)
+      direction?: 'LONG' | 'EXIT';
+      validationType?: 'REGIME_WEIGHTED_WALK_FORWARD';
+      marketRegime?: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
+      exactRegimeSampleSize?: number;
+      totalSampleSize?: number;
+      effectiveSampleSize?: number;
+      ownStockSampleSize?: number;
+      sectorSampleSize?: number;
+      poolSampleSize?: number;
+      recentSampleShare?: number;
+      horizonDays?: number;
+      horizonEvidence?: { horizonDays: number; sampleSize: number; winRate: number; expectancy: number }[];
     };
     // V60.2: 筹码峰价位
     chipPeaks?: {
@@ -168,6 +182,7 @@ export const analyzeStockSignal = (
   },
   eventDrivenContext?: EventDrivenDetection, // V64.0: 事件驱动传导时滞修正
   runtimeContext?: EngineRuntimeContext,
+  historicalPeerStocks: Stock[] = [],
 ): PredatorSignal => {
   // --- 1. Initialization & DNA Profiling (V13.0) ---
   const current = stock.currentPrice || 0;
@@ -2538,6 +2553,20 @@ export const analyzeStockSignal = (
   // ═══════════════════════════════════════════════════════════════════════════
   // 在history[]上模拟简化版信号检测，统计真实胜率和最优止损
   const _backtestHistory = (): NonNullable<NonNullable<PredatorSignal['smartEntry']>['backtest']> | null => {
+    const evidenceDirection = signalType === 'SELL' || expectedDirection === 'DOWN'
+      ? 'EXIT'
+      : 'LONG';
+    const regimeAwareEvidence = buildHistoricalPatternEvidence({
+      stock,
+      peerStocks: historicalPeerStocks,
+      signalTitle,
+      direction: evidenceDirection,
+      marketRegime: resolveMarketRegime(marketContext),
+    });
+    // Exit evidence has a different outcome definition (avoided loss versus
+    // continuing to hold), so it must never fall back to the legacy long model.
+    if (regimeAwareEvidence || evidenceDirection === 'EXIT') return regimeAwareEvidence;
+
     const hist = stock.history;
     if (!hist || hist.length < 30) return null;
     

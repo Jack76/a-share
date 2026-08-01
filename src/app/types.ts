@@ -299,6 +299,23 @@ export interface Stock {
             optimalStopMult: number;
             profitFactor: number;
             expectancy: number;
+            direction?: 'LONG' | 'EXIT';
+            validationType?: 'REGIME_WEIGHTED_WALK_FORWARD';
+            marketRegime?: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
+            exactRegimeSampleSize?: number;
+            totalSampleSize?: number;
+            effectiveSampleSize?: number;
+            ownStockSampleSize?: number;
+            sectorSampleSize?: number;
+            poolSampleSize?: number;
+            recentSampleShare?: number;
+            horizonDays?: number;
+            horizonEvidence?: {
+              horizonDays: number;
+              sampleSize: number;
+              winRate: number;
+              expectancy: number;
+            }[];
         };
         // V60.2: 筹码峰价位
         chipPeaks?: {
