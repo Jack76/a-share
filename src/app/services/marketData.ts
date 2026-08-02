@@ -2,12 +2,18 @@ import { Stock, MarketIndex, Theme } from '../types';
 import { projectId, publicAnonKey } from '../../../utils/supabase/info'; // Fix: Correct relative path
 import { 
     getLocalHistoryBatch, 
+    inspectLocalHistoryBatch,
+    markLocalHistoryUpgradeAttempt,
     setLocalHistoryBatch, 
     getLocalFundsBatch, 
     setLocalFundsBatch,
     getLocalMarketSnapshot,
     setLocalMarketSnapshot 
 } from './localDb';
+import {
+  assessStockHistoryCache,
+  STOCK_HISTORY_REQUESTED_BARS,
+} from './historyCachePolicy';
 
 // Simple cache for stock data to deduplicate rapid requests
 const stockDataCache = new Map<string, { data: any, timestamp: number }>();
@@ -19,8 +25,6 @@ const MARKET_STATS_CACHE_TTL = 5000;
 // In-flight request deduplication
 const inFlightRequests = new Map<string, Promise<any>>();
 const marketStatsCache = new Map<string, { data: MarketStatsSnapshot; timestamp: number }>();
-const historyUpgradeAttempted = new Set<string>();
-const PREFERRED_STOCK_HISTORY_BARS = 600;
 let lastGoodThemes: { data: Theme[]; timestamp: number } | null = null;
 let lastGoodIndices: { data: MarketIndex[]; timestamp: number } | null = null;
 
@@ -235,58 +239,41 @@ export const fetchIntradayBatch = async (
   }
 };
 
-export const fetchStockHistoryBatch = async (codes: string[]): Promise<Record<string, StockHistoryPoint[]>> => {
+export const fetchStockHistoryBatch = async (
+  codes: string[],
+  options: { forceRefresh?: boolean } = {},
+): Promise<Record<string, StockHistoryPoint[]>> => {
   if (!projectId || codes.length === 0) return {};
 
-  // 0. Try Load from IndexedDB
-  const { results: localData, missing } = await getLocalHistoryBatch(codes);
+  // 0. Inspect IndexedDB without discarding expired entries. Stale data remains
+  // a usable fallback while the network refresh runs.
+  const { entries, missing } = await inspectLocalHistoryBatch(codes);
   
   // V8.2: Data Sufficiency & Freshness Check
   // We need to check TWO things:
   // 1. Quantity: Do we have enough history for indicators? (Min 30 days, preferred 60)
   // 2. Freshness: Is the data up to date? (Last date matches recent trading days)
   
-  const validLocalData: Record<string, { day: string; close: number }[]> = {};
-  const insufficientDataCodes: string[] = [];
-  
-  // Calculate "Freshness" threshold (approximate)
-  // If the last data point is older than 5 days, we definitely need an update.
-  const now = new Date();
-  const freshnessThreshold = new Date(now.setDate(now.getDate() - 5)).toISOString().split('T')[0];
-  
-  Object.entries(localData).forEach(([code, history]) => {
-      if (!history || history.length === 0) {
-          insufficientDataCodes.push(code);
-          return;
-      }
+  const validLocalData: Record<string, StockHistoryPoint[]> = {};
+  const refreshCodes: string[] = [];
+  const upgradeCodes: string[] = [];
+  const now = Date.now();
 
-      // Check 1: Freshness
-      const lastItem = history[history.length - 1];
-      const lastDate = lastItem.day || lastItem.date;
-      
-      // If data is stale (older than 5 days), force refresh regardless of length
-      // Note: This is a loose check. For strict check we'd need market calendar.
-      const isFresh = lastDate >= freshnessThreshold;
-      
-      if (!isFresh) {
-           insufficientDataCodes.push(code);
-           return;
-      }
+  Object.entries(entries).forEach(([code, entry]) => {
+      const assessment = assessStockHistoryCache(entry.data, {
+        cachedAt: entry.cachedAt,
+        requestedBars: entry.requestedBars,
+        upgradeAttemptedAt: entry.upgradeAttemptedAt,
+      }, now);
 
-      // Upgrade old 300-bar caches once per page session. Newly listed stocks
-      // may legitimately have less history, so never loop on the same code.
-      const shouldUpgradeHistory = history.length < PREFERRED_STOCK_HISTORY_BARS &&
-        !historyUpgradeAttempted.has(code);
-      if (shouldUpgradeHistory) historyUpgradeAttempted.add(code);
-
-      if (history.length < 5 || shouldUpgradeHistory) {
-          insufficientDataCodes.push(code);
-      } else {
-          validLocalData[code] = history;
-      }
+      if (assessment.canRender) validLocalData[code] = entry.data;
+      if (options.forceRefresh || assessment.shouldRefresh) refreshCodes.push(code);
+      if (assessment.shouldUpgrade) upgradeCodes.push(code);
   });
   
-  const finalMissing = [...new Set([...missing, ...insufficientDataCodes])];
+  const finalMissing = options.forceRefresh
+    ? [...new Set(codes)]
+    : [...new Set([...missing, ...refreshCodes])];
   
   if (finalMissing.length === 0) {
       // console.log(`[Cache] All ${codes.length} stocks loaded from IndexedDB`);
@@ -305,6 +292,12 @@ export const fetchStockHistoryBatch = async (codes: string[]): Promise<Record<st
   }
 
   const apiResults: Record<string, StockHistoryPoint[]> = {};
+
+  // Persist the attempt independently from success. A temporary upstream
+  // failure must not restart a full legacy-cache upgrade on every page load.
+  if (upgradeCodes.length > 0) {
+    await markLocalHistoryUpgradeAttempt(upgradeCodes, now);
+  }
   
   // 2. Max concurrency 3 (Improved wave strategy)
   const concurrency = 2;
@@ -354,7 +347,10 @@ export const fetchStockHistoryBatch = async (codes: string[]): Promise<Record<st
 
   // 3. Save new data to IndexedDB
   if (Object.keys(apiResults).length > 0) {
-      setLocalHistoryBatch(apiResults);
+      await setLocalHistoryBatch(apiResults, {
+        requestedBars: STOCK_HISTORY_REQUESTED_BARS,
+        upgradeAttemptedAt: now,
+      });
   }
   
   return { ...validLocalData, ...apiResults };

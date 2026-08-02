@@ -45,7 +45,7 @@ import {
   fetchIntradayBatch,
   type MarketStatsSnapshot,
 } from '../services/marketData';
-import { getLocalHistoryBatch, setLocalHistoryBatch } from '../services/localDb'; // Fix: Correct imports from localDb
+import { inspectLocalHistoryBatch } from '../services/localDb';
 import { detectMarketEvents } from "../utils/events";
 import { getPresetStocks, detectEventDrivenMode, type EventDrivenDetection } from "../data/presetStocks";
 import { calculateRealtimeMetrics } from "../utils/realtimeAnalysis";
@@ -215,6 +215,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [lastMarketRefreshAt, setLastMarketRefreshAt] = useState<number | null>(null);
   const [marketRefreshError, setMarketRefreshError] = useState<string | null>(null);
   const [eventDrivenMode, setEventDrivenMode] = useState<EventDrivenDetection | null>(null); // V64.0
+  const [historyLoadRevision, setHistoryLoadRevision] = useState(0);
 
   const stocksRef = useRef(stocks);
   const themesRef = useRef(themes);
@@ -1523,22 +1524,56 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const forceRefreshHistory = () => {
       setStocks(prev => prev.map(s => (s.history && s.history.length === 0) ? { ...s, history: undefined } : s));
+      setHistoryLoadRevision(revision => revision + 1);
   };
 
   // History Fetching Logic (Centralized)
-  // V59.6 FIX: Replaced [stocks] dependency with polling to break infinite render loop.
-  // Old pattern: useEffect([stocks]) → updateStocks → recalculateStockScores (new objects for ALL stocks)
-  //   → stocks reference changes → useEffect fires again → cascade until "Maximum update depth exceeded".
-  // New pattern: Poll via interval using stocksRef (no dependency on stocks state).
+  // The stock-code key changes only when the pool membership changes. History
+  // updates therefore do not restart this loader or create a render loop.
+  const historyUniverseKey = useMemo(
+    () => stocks.map(stock => stock.code).sort().join(','),
+    [stocks],
+  );
   const isFetchingHistoryRef = useRef(false);
   useEffect(() => {
-    const fetchMissingHistory = () => {
+    let cancelled = false;
+    let nextBatchTimer: number | undefined;
+    const attemptedCodes = new Set<string>();
+
+    const historySignature = (history: Stock['history']) => {
+      if (!history?.length) return '';
+      const first = history[0];
+      const last = history[history.length - 1];
+      return `${history.length}:${first.day}:${last.day}:${last.close}`;
+    };
+
+    const scheduleNextBatch = (delayMs = 250) => {
+      if (cancelled || nextBatchTimer !== undefined) return;
+      nextBatchTimer = window.setTimeout(() => {
+        nextBatchTimer = undefined;
+        void fetchMissingHistory();
+      }, delayMs);
+    };
+
+    const fetchMissingHistory = async () => {
+      if (cancelled) return;
       if (document.hidden) return;
       const currentStocks = stocksRef.current;
       if (currentStocks.length === 0) return;
-      if (isFetchingHistoryRef.current) return;
+      if (isFetchingHistoryRef.current) {
+        scheduleNextBatch(500);
+        return;
+      }
 
-      const missingHistory = currentStocks.filter(s => s.history === undefined);
+      const missingHistory = currentStocks
+        .filter(stock => stock.history === undefined && !attemptedCodes.has(stock.code))
+        .sort((a, b) => {
+          const priority = (stock: Stock) =>
+            (stock.status === 'Hold' ? 4 : 0) +
+            (stock.tags?.includes('SelfSelect') ? 2 : 0) +
+            (stock.role === 'Leader' ? 1 : 0);
+          return priority(b) - priority(a);
+        });
       if (missingHistory.length === 0) return;
 
       isFetchingHistoryRef.current = true;
@@ -1546,46 +1581,61 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const batchSize = 15;
       const batch = missingHistory.slice(0, batchSize);
       const codes = batch.map(s => s.code);
+      codes.forEach(code => attemptedCodes.add(code));
 
-      fetchStockHistoryBatch(codes).then(map => {
-          const updates: { id: string, changes: Partial<Stock> }[] = [];
-          
-          Object.keys(map).forEach(code => {
-               const stock = stocksRef.current.find(s => s.code === code);
-               if (stock && map[code] && map[code].length > 0) {
-                   updates.push({ id: stock.id, changes: { history: map[code] } });
-               }
+      try {
+          // Stale-while-revalidate: show any local series immediately instead
+          // of leaving trend cells blank while the network request is pending.
+          const { entries: cachedEntries } = await inspectLocalHistoryBatch(codes);
+          if (cancelled) return;
+          const cachedUpdates = Object.entries(cachedEntries).flatMap(([code, entry]) => {
+            const stock = stocksRef.current.find(item => item.code === code);
+            return stock
+              ? [{ id: stock.id, changes: { history: entry.data } }]
+              : [];
           });
+          if (cachedUpdates.length > 0) updateStocks(cachedUpdates);
+
+          const refreshedMap = await fetchStockHistoryBatch(codes);
+          if (cancelled) return;
+          const refreshedUpdates: { id: string; changes: Partial<Stock> }[] = [];
 
           codes.forEach(code => {
-              if (!map[code] || map[code].length === 0) {
-                  const stock = stocksRef.current.find(s => s.code === code);
-                  if (stock) {
-                       updates.push({ id: stock.id, changes: { history: [] } });
-                  }
+              const stock = stocksRef.current.find(item => item.code === code);
+              if (!stock) return;
+              const refreshed = refreshedMap[code];
+              const cached = cachedEntries[code]?.data;
+
+              if (refreshed?.length) {
+                if (historySignature(refreshed) !== historySignature(cached)) {
+                  refreshedUpdates.push({ id: stock.id, changes: { history: refreshed } });
+                }
+              } else if (!cached?.length) {
+                refreshedUpdates.push({ id: stock.id, changes: { history: [] } });
               }
           });
 
-          if (updates.length > 0) {
-              updateStocks(updates);
-          }
-      }).catch(err => {
+          if (refreshedUpdates.length > 0) updateStocks(refreshedUpdates);
+      } catch (err) {
           console.error("History batch error", err);
-      }).finally(() => {
+      } finally {
           isFetchingHistoryRef.current = false;
-      });
+          if (!cancelled) scheduleNextBatch();
+      }
     };
 
-    // Initial fetch after a short delay (let loadData settle)
-    const initialTimer = setTimeout(fetchMissingHistory, 1000);
-    // Poll every 3 seconds to pick up remaining batches
-    const interval = setInterval(fetchMissingHistory, 3000);
+    const resumeWhenVisible = () => {
+      if (!document.hidden) scheduleNextBatch(0);
+    };
+    document.addEventListener('visibilitychange', resumeWhenVisible);
+    scheduleNextBatch(250);
     
     return () => {
-      clearTimeout(initialTimer);
-      clearInterval(interval);
+      cancelled = true;
+      if (nextBatchTimer !== undefined) window.clearTimeout(nextBatchTimer);
+      document.removeEventListener('visibilitychange', resumeWhenVisible);
     };
-  }, []);
+  }, [historyLoadRevision, historyUniverseKey]);
 
   // V65.1 PERF: Memoize context value to prevent unnecessary re-renders of all consumers
   // when unrelated parent state changes. Each state variable is a dependency.

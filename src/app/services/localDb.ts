@@ -3,6 +3,20 @@ import { getMany, setMany } from 'idb-keyval';
 interface CachedHistory {
     data: any[];
     timestamp: number;
+    requestedBars?: number;
+    upgradeAttemptedAt?: number;
+}
+
+export interface LocalHistoryEntry {
+    data: any[];
+    cachedAt: number;
+    requestedBars?: number;
+    upgradeAttemptedAt?: number;
+}
+
+interface HistoryWriteOptions {
+    requestedBars?: number;
+    upgradeAttemptedAt?: number;
 }
 
 const PREFIX = 'hist_';
@@ -54,15 +68,81 @@ export const getLocalHistoryBatch = async (codes: string[]) => {
     }
 };
 
-export const setLocalHistoryBatch = async (map: Record<string, any[]>) => {
+// Returns every usable cached series, including expired entries. Callers can
+// paint these immediately and then decide whether a background refresh is due.
+export const inspectLocalHistoryBatch = async (codes: string[]) => {
+    try {
+        const keys = codes.map(c => PREFIX + c);
+        const values = await getMany(keys);
+        const entries: Record<string, LocalHistoryEntry> = {};
+        const missing: string[] = [];
+
+        codes.forEach((code, index) => {
+            const value = values[index] as CachedHistory | undefined;
+            if (value?.data && Array.isArray(value.data) && value.data.length > 0) {
+                entries[code] = {
+                    data: value.data,
+                    cachedAt: value.timestamp,
+                    requestedBars: value.requestedBars,
+                    upgradeAttemptedAt: value.upgradeAttemptedAt,
+                };
+            } else {
+                missing.push(code);
+            }
+        });
+
+        return { entries, missing };
+    } catch (e) {
+        console.warn('IndexedDB Inspect Error', e);
+        return { entries: {}, missing: codes } as {
+            entries: Record<string, LocalHistoryEntry>;
+            missing: string[];
+        };
+    }
+};
+
+export const setLocalHistoryBatch = async (
+    map: Record<string, any[]>,
+    options: HistoryWriteOptions = {},
+) => {
     try {
         const entries: [IDBValidKey, any][] = Object.entries(map).map(([code, data]) => [
             PREFIX + code,
-            { data, timestamp: Date.now() }
+            {
+                data,
+                timestamp: Date.now(),
+                requestedBars: options.requestedBars,
+                upgradeAttemptedAt: options.upgradeAttemptedAt,
+            }
         ]);
         await setMany(entries);
     } catch (e) {
         console.warn('IndexedDB Set Error', e);
+    }
+};
+
+export const markLocalHistoryUpgradeAttempt = async (
+    codes: string[],
+    attemptedAt = Date.now(),
+) => {
+    if (codes.length === 0) return;
+    try {
+        const keys = codes.map(code => PREFIX + code);
+        const values = await getMany(keys);
+        const updates: [IDBValidKey, CachedHistory][] = [];
+
+        codes.forEach((code, index) => {
+            const value = values[index] as CachedHistory | undefined;
+            if (!value?.data || !Array.isArray(value.data)) return;
+            updates.push([
+                PREFIX + code,
+                { ...value, upgradeAttemptedAt: attemptedAt },
+            ]);
+        });
+
+        if (updates.length > 0) await setMany(updates);
+    } catch (e) {
+        console.warn('IndexedDB Upgrade Marker Error', e);
     }
 };
 

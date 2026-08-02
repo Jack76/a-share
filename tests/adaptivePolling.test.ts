@@ -18,3 +18,12 @@ test('live scanners stop outside market hours and skip hidden tabs', async () =>
   assert.match(storeSource, /if \(!document\.hidden\) void refreshData\(\)/);
   assert.match(detailSource, /if \(isMounted && isMarketOpen\)/);
 });
+
+test('history hydration drains pending batches without a permanent polling loop', async () => {
+  const storeSource = await readSource('../src/app/context/Store.tsx');
+
+  assert.match(storeSource, /inspectLocalHistoryBatch\(codes\)/);
+  assert.match(storeSource, /scheduleNextBatch\(\)/);
+  assert.match(storeSource, /historyUniverseKey/);
+  assert.doesNotMatch(storeSource, /setInterval\(fetchMissingHistory/);
+});

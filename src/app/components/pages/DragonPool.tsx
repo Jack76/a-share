@@ -776,7 +776,7 @@ export const DragonPool: React.FC = () => {
         // Refresh extended history for all visible pool stocks.
         const codes = stocks.map(s => s.code);
         if (codes.length > 0) {
-            const historyMap = await fetchStockHistoryBatch(codes);
+            const historyMap = await fetchStockHistoryBatch(codes, { forceRefresh: true });
             // V65.1 PERF: Batch all updates (was: individual updateStock per stock → O(n) full recalcs)
             const batchUpdates: { id: string; changes: Partial<Stock> }[] = [];
 
