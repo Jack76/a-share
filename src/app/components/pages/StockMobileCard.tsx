@@ -151,7 +151,15 @@ export const StockMobileCard: React.FC<StockMobileCardProps> = ({
         {/* Left: Name & Code */}
         <div className="flex flex-col">
           <div className="flex items-center gap-2">
-            <span className="text-base font-black text-slate-900">{stock.name}</span>
+            <button
+              type="button"
+              onClick={() => onDiagnose(stock)}
+              className="text-left text-base font-black text-slate-900 transition-colors hover:text-red-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+              aria-label={`查看${stock.name}详情`}
+              title={`查看${stock.name}详情`}
+            >
+              {stock.name}
+            </button>
             {stock.stargate?.gateLevel && stock.stargate.gateLevel > 0 && (
                 <Badge className="bg-indigo-50 text-indigo-600 border-indigo-100 text-[8px] h-4 px-1 font-black flex items-center gap-0.5">
                     G{stock.stargate.gateLevel}

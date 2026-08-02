@@ -542,9 +542,15 @@ export const StockTableRow = React.memo(
       <TableRow className="group transition-none border-border/30 hover:bg-slate-50/50 h-[80px] md:h-[80px] overflow-hidden transform-gpu relative">
         <TableCell className="sticky left-0 z-10 bg-white group-hover:bg-slate-50 transition-colors pl-2 md:pl-8 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] w-[90px] md:w-auto">
           <div className="flex flex-col justify-center h-full py-1">
-            <div className="font-black text-sm tracking-tight text-slate-900 group-hover:text-red-600 transition-colors truncate max-w-[80px] md:max-w-none">
+            <button
+              type="button"
+              onClick={() => onDiagnose(stock)}
+              className="w-fit max-w-[80px] truncate text-left text-sm font-black tracking-tight text-slate-900 transition-colors hover:text-red-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 md:max-w-none"
+              aria-label={`查看${stock.name}详情`}
+              title={`查看${stock.name}详情`}
+            >
               {stock.name}
-            </div>
+            </button>
             {/* Mobile: Code on separate line */}
             <div className="text-[10px] font-mono font-bold text-slate-400 mt-0.5 md:hidden">
                 {stock.code}
