@@ -6,6 +6,7 @@
 
 import { Stock, MarketPhase } from '../types';
 import { calculateAlphaDivergence } from './indicators';
+import { assessMarginTradingRisk } from './marginRisk';
 
 export interface TrapSignal {
   type: string;
@@ -30,6 +31,7 @@ const SIGNAL_GROUP_LIMITS: Record<string, number> = {
   EXHAUSTION: 50,    // 动能衰竭类信号总分上限
   PHASE: 30,         // 阶段压制类信号总分上限
   TECHNICAL: 25,     // 技术指标类信号总分上限
+  LEVERAGE: 20,      // T-1 融资融券只作为有上限的风险覆盖层
   OTHER: 30          // 其他类信号总分上限
 };
 
@@ -49,6 +51,7 @@ const SIGNAL_GROUP_MAP: Record<string, string> = {
   'AlgoTrapping': 'TRAP',
   'PhaseSuppress': 'PHASE',
   'Overbought': 'TECHNICAL',
+  'MarginLeverage': 'LEVERAGE',
   'CoreDivergence': 'TRAP'
 };
 
@@ -394,6 +397,19 @@ export const analyzeTrapRiskV41 = (
       description: `获利盘比例${profitRatio.toFixed(0)}%，退潮期兑现压力极大`,
       baseWeight,
       group: 'EXHAUSTION'
+    });
+  }
+
+  // === 13. T-1 融资融券杠杆风险 ===
+  // 仅当数据完整且能用成交额归一化时生效；不将融资等同于主力资金。
+  const marginRisk = assessMarginTradingRisk(stock);
+  if (marginRisk.status === 'AVAILABLE' && marginRisk.riskScore > 0) {
+    signals.push({
+      type: 'MarginLeverage',
+      severity: marginRisk.riskScore >= 18 ? 'High' : 'Medium',
+      description: marginRisk.evidence[0] || '融资融券杠杆风险上升',
+      baseWeight: marginRisk.riskScore,
+      group: 'LEVERAGE'
     });
   }
   

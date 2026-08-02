@@ -24,6 +24,7 @@ import {
   formatCapitalFlowYuan,
   getDirectLargeOrderNetYuan,
 } from '../../utils/capitalFlow';
+import { assessMarginTradingRisk } from '../../utils/marginRisk';
 import { sanitizeAdvisoryLanguage } from '../../utils/advisoryLanguage';
 
 interface StockDiagnosisDialogProps {
@@ -217,13 +218,9 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
       refinedRisk = 10;
   }
 
-  // V17.5: MARGIN TRADING RISK
-  const margin = stock.marginData;
-  if (margin) {
-      if ((stock.changePercent || 0) < -5 && margin.financingNetBuy > 1000) refinedRisk += 25;
-      if (margin.financingNetBuy > 500 && (largeOrderNetYuan || 0) < -50_000_000) refinedRisk += 20;
-      if (margin.shortNetSell > 500) refinedRisk += 15;
-  }
+  // T-1 融资融券只作为已归一化的杠杆风险覆盖层。
+  // trapRiskScore 已通过 TrapGuard 纳入该因子，详情页不再重复加分。
+  const marginRisk = assessMarginTradingRisk(stock);
 
   // --- V17.0: GOLDEN PIT DETECTION ---
   const isCoreAsset = ['Leader', 'Vice', 'Main'].includes(stock.role);
@@ -231,7 +228,9 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   const turnoverAmt = capitalFlow.turnoverYuan || 0;
   const flowRatio = capitalFlow.directRatio;
   const isShrinking = (stock.turnoverRate || 0) < 15; 
-  const isLeverageWash = margin ? margin.financingNetBuy < 0 : true;
+  const isLeverageWash = marginRisk.status === 'AVAILABLE' &&
+    (marginRisk.financingNetBuyRatio || 0) < 0 &&
+    marginRisk.riskScore === 0;
   const isSectorSafe = !stock.isThemeDropout && (stock.resonanceScore || 0) > 50;
   const isHighConfidence = isActionableBullishPrediction(stock.aiPrediction?.prediction);
   const isGoldenPit = isCoreAsset && isDrop && isVerifiedLargeOrderInflow && isShrinking && !isNuclear && isSectorSafe && isHighConfidence && isLeverageWash;
@@ -356,14 +355,8 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
   if ((stock.turnoverRate || 0) > 15 && volRatio > 2.5 && !isLimitUp) score -= 10;
   if ((stock.turnoverRate || 0) > 50) score -= 30;
 
-  if (margin) {
-      if (margin.financingNetBuy > 2000) {
-          if ((stock.changePercent || 0) > 0) score += 5;
-          else score -= 10;
-      }
-      if (margin.shortNetSell > 500) score -= 10;
-      if (margin.shortCover > 500) score += 5;
-  }
+  // 单项影响封顶：温和共振最多 +2，杠杆风险最多 -15。
+  score += marginRisk.buyScoreAdjustment;
 
   if (localMetrics) {
       const staticMoneyScore = largeOrderNetYuan === undefined
@@ -1149,17 +1142,15 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
           };
       }
 
-      // Margin Risk (V46.6: Promoted to Tier 1)
-      if (margin) {
-          if ((stock.changePercent || 0) < -4 && margin.financingNetBuy > 1000) {
-               return {
-                  title: "融资盘踩踏",
-                  color: "bg-red-950 from-red-900 to-black border-red-800 shadow-red-900/50",
-                  textColor: "text-red-400 animate-pulse",
-                  icon: <Users className="w-8 h-8 text-red-500" />,
-                  advice: `【态势】监测到股价下跌趋势中，融资盘逆势大幅买入。\n【内幕】净买入${margin.financingNetBuy}万。这是典型的"多杀多"前兆，一旦杠杆资金止损，将引发雪崩。\n【指令】不要试图抄底，君子不立危墙之下。`
-              };
-          }
+      // T-1 Margin Risk: leverage overlay, never described as insider/main-force evidence.
+      if (marginRisk.status === 'AVAILABLE' && marginRisk.riskScore >= 12) {
+           return {
+              title: marginRisk.signal === 'DELEVERAGING_PRESSURE' ? "去杠杆压力" : "融资拥挤风险",
+              color: "bg-red-950 from-red-900 to-black border-red-800 shadow-red-900/50",
+              textColor: "text-red-400 animate-pulse",
+              icon: <Users className="w-8 h-8 text-red-500" />,
+              advice: `【态势】${marginRisk.evidence.join('；')}。\n【证据】该数据截至${marginRisk.dataAsOf || '前一交易日'}，为T-1融资融券汇总，已按成交额归一化，风险覆盖分${marginRisk.riskScore}/20。\n【指令】降低买入权重，持仓优先检查止损与分批减仓条件；不依据单一融资因子作出决策。`
+          };
       }
 
       // High Confidence Fraud (Decoy > 65 to avoid flickering)

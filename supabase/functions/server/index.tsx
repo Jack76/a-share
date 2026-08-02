@@ -3,6 +3,11 @@ import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
 import * as kv from "./kv_store.tsx";
 import { calculateLimitState } from "./market_rules.ts";
+import {
+    parseMarginTradingRow,
+    parseTencentTurnoverYuan,
+    type MarginTradingSnapshot,
+} from "./market_data_parsers.ts";
 
 // Monkey-patch console.error to suppress unavoidable Deno runtime errors
 // The "Http: connection closed" error happens at the runtime layer when a client disconnects
@@ -122,6 +127,69 @@ app.use(
 
 // Define API routes in a separate app instance to support flexible routing
 const api = new Hono();
+
+const marginTradingCache = new Map<string, { data: MarginTradingSnapshot; storedAt: number }>();
+const MARGIN_TRADING_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+const fetchMarginTradingBatch = async (batchCodes: string[]): Promise<Record<string, MarginTradingSnapshot>> => {
+    const now = Date.now();
+    const rawCodes = Array.from(new Set(batchCodes
+        .map(code => code.replace(/^(sh|sz|bj)/, ''))
+        .filter(code => /^\d{6}$/.test(code))));
+    const output: Record<string, MarginTradingSnapshot> = {};
+    const missing: string[] = [];
+
+    rawCodes.forEach(code => {
+        const cached = marginTradingCache.get(code);
+        if (cached && now - cached.storedAt < MARGIN_TRADING_CACHE_TTL_MS) {
+            output[code] = cached.data;
+        } else {
+            missing.push(code);
+        }
+    });
+    if (missing.length === 0) return output;
+
+    const filter = `(scode in (${missing.map(code => `"${code}"`).join(',')}))`;
+    const columns = [
+        'DATE', 'SCODE', 'RZYE', 'RQYE', 'RZMRE', 'RZCHE', 'RZJME',
+        'RQMCL', 'RQCHL', 'RQJMG', 'SPJ', 'SZ', 'RZYEZB'
+    ].join(',');
+    // Several recent sessions are requested because stocks can have different
+    // latest reporting dates after suspensions or exchange publication delays.
+    const pageSize = Math.max(15, missing.length * 5);
+    const url = `https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPTA_WEB_RZRQ_GGMX&columns=${columns}&source=WEB&sortColumns=date&sortTypes=-1&pageNumber=1&pageSize=${pageSize}&filter=${encodeURIComponent(filter)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+        const response = await fetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://data.eastmoney.com/rzrq/detail/all.html",
+            },
+            signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`Margin source status ${response.status}`);
+        const json = await response.json();
+        const rows = Array.isArray(json?.result?.data) ? json.result.data : [];
+
+        rows.forEach((row: any) => {
+            const code = String(row?.SCODE || '');
+            // Results are date-descending; retain the latest valid row per code.
+            if (!missing.includes(code) || output[code]) return;
+            const data = parseMarginTradingRow(row);
+            if (!data) return;
+            output[code] = data;
+            marginTradingCache.set(code, { data, storedAt: now });
+        });
+    } catch (error) {
+        console.warn('Margin trading enrichment unavailable:', error);
+    } finally {
+        clearTimeout(timeout);
+    }
+
+    return output;
+};
 
 // Helper for robust KV access with retries
 const safeKvGet = async (key: string, retries = 2) => {
@@ -323,7 +391,7 @@ api.get("/market/themes", async (c) => {
               return `0.${c}`; // Default
           }).join(',');
           
-          const emPath = `/api/qt/ulist.np/get?fltt=2&invt=2&secids=${emIds}&fields=f12,f14,f2,f3,f5,f6,f8,f15,f16,f17,f18,f62,f124,f184,f185,f186,f187,f188,f189`;
+          const emPath = `/api/qt/ulist.np/get?fltt=2&invt=2&secids=${emIds}&fields=f12,f14,f2,f3,f5,f6,f8,f15,f16,f17,f18,f62,f124`;
           const emUrls = [
               `https://push2.eastmoney.com${emPath}`,
               `https://push2delay.eastmoney.com${emPath}`,
@@ -376,9 +444,10 @@ api.get("/market/themes", async (c) => {
               };
 
               // Use allSettled so one failure doesn't kill the other
-              const [tencentResult, emResult] = await Promise.allSettled([
+              const [tencentResult, emResult, marginResult] = await Promise.allSettled([
                   tencentPromise,
-                  fetchEmWithRetry()
+                  fetchEmWithRetry(),
+                  fetchMarginTradingBatch(batchCodes),
               ]);
 
               // Process Tencent Data
@@ -399,6 +468,10 @@ api.get("/market/themes", async (c) => {
                               const changePercent = prevClose > 0
                                 ? parseFloat((((current - prevClose) / prevClose) * 100).toFixed(2))
                                 : 0;
+                              // Tencent field 35 is "price/volume/amount" and the third
+                              // value is the exact turnover in yuan. Field 37 is expressed
+                              // in 10k yuan and must never be passed through as yuan.
+                              const turnoverYuan = parseTencentTurnoverYuan(data);
                               const limitState = calculateLimitState({
                                   code: code.replace(/^(sh|sz|bj)/, ''),
                                   name: data[1],
@@ -417,7 +490,8 @@ api.get("/market/themes", async (c) => {
                                   open: parseFloat(data[5]),
                                   prevClose: prevClose,
                                   volume: parseFloat(data[6]),
-                                  turnover: parseFloat(data[37]),
+                                  turnover: turnoverYuan,
+                                  amount: turnoverYuan,
                                   turnoverRate: parseFloat(data[38]),
                                   limitUpPrice: limitState.limitUpPrice,
                                   limitDownPrice: limitState.limitDownPrice,
@@ -447,7 +521,7 @@ api.get("/market/themes", async (c) => {
                   });
               }
 
-              // Process Eastmoney Data (Flow & Margin)
+              // Process Eastmoney quote/large-order flow data.
               if (emResult.status === 'fulfilled') {
                   const emResp = emResult.value;
                   if (emResp && emResp.ok) {
@@ -513,27 +587,6 @@ api.get("/market/themes", async (c) => {
                                           results[matchedKey].largeOrderNetAsOf = results[matchedKey].sourceAsOf;
                                       }
 
-                                      // V17.5: Margin Data (T-1)
-                                      const rzye = parseFloat(item.f184); // Financing Balance (Yuan)
-                                      const rzmre = parseFloat(item.f185); // Financing Buy (Yuan)
-                                      const rzche = parseFloat(item.f186); // Financing Repay (Yuan)
-                                      const rqye = parseFloat(item.f187); // Short Balance (Yuan)
-                                      const rqmcl = parseFloat(item.f188); // Short Sell Vol (Shares)
-                                      const rqchl = parseFloat(item.f189); // Short Repay Vol (Shares)
-                                      
-                                      if (!isNaN(rzye)) {
-                                          // Convert Yuan to Wan (10000)
-                                          const currentP = results[matchedKey].currentPrice || 10;
-                                          results[matchedKey].marginData = {
-                                              financingBalance: rzye / 10000, 
-                                              financingBuy: rzmre / 10000,
-                                              financingNetBuy: (rzmre - rzche) / 10000,
-                                              shortBalance: rqye / 10000,
-                                              shortSellVolume: rqmcl / 100, // Shares -> Hands
-                                              // Estimate Net Sell Value: (Sell - Repay) * Price
-                                              shortNetSell: ((rqmcl - rqchl) * currentP) / 10000
-                                          };
-                                      }
                                   }
                               });
                           }
@@ -543,6 +596,17 @@ api.get("/market/themes", async (c) => {
                   }
               } else {
                   console.warn(`EM Fetch Failed for batch ${batchCodes[0]}...`, emResult.reason);
+              }
+
+              if (marginResult.status === 'fulfilled') {
+                  Object.entries(marginResult.value).forEach(([rawCode, marginData]) => {
+                      const possibleKeys = [`sh${rawCode}`, `sz${rawCode}`, `bj${rawCode}`, rawCode];
+                      const matchedKey = possibleKeys.find(key => batchCodes.includes(key))
+                        || possibleKeys.find(key => results[key]);
+                      if (matchedKey && results[matchedKey]) {
+                          results[matchedKey].marginData = marginData;
+                      }
+                  });
               }
 
           } catch (error: any) {
@@ -1640,6 +1704,7 @@ api.get("/market/history", async (c) => {
                       }));
                   }
               }
+
           }
       } catch (e) {
           console.warn(`Tencent history failed for ${symbol}, trying Sina fallback...`, e);

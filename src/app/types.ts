@@ -135,10 +135,17 @@ export interface Stock {
   marginData?: {
     financingBalance: number;     // 融资余额 (万)
     financingBuy: number;         // 融资买入额 (万)
+    financingRepay?: number;      // 融资偿还额 (万)
     financingNetBuy: number;      // 融资净买入 (万)
     shortBalance: number;         // 融券余额 (万)
     shortSellVolume: number;      // 融券卖出量 (手)
+    shortRepayVolume?: number;    // 融券偿还量 (手)
     shortNetSell: number;         // 融券净卖出 (万)
+    source?: 'eastmoney-margin';
+    reportingLag?: 'T-1';
+    asOf?: string;                // 交易所日级汇总对应的交易日
+    floatMarketCapYuan?: number;
+    financingBalanceRatio?: number; // 融资余额 / 流通市值（0-1）
   };
 
   // v7.2 实时盘口数据 (Real-time Market Data)
