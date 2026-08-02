@@ -183,6 +183,17 @@ interface IndexData {
   changePercent: number;
 }
 
+interface FundPageSessionCache {
+  funds: ExtendedFund[];
+  indices: IndexData[];
+  lastRefresh: string;
+}
+
+// App tab changes unmount FundRadar. Preserve the last computed view for the
+// current browser session so returning to the tab is instant while fresh data
+// is loaded in the background.
+let fundPageSessionCache: FundPageSessionCache | null = null;
+
 // ===================== CONFIGURATION =====================
 
 const FUND_CATEGORIES = [
@@ -3423,10 +3434,14 @@ const withFundLoadDeadline = async <T,>(
 
 export const FundRadar: React.FC = () => {
   const { marketThemes = [] } = useTrading();
-  const [funds, setFunds] = useState<ExtendedFund[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [funds, setFunds] = useState<ExtendedFund[]>(
+    () => fundPageSessionCache?.funds || [],
+  );
+  const [loading, setLoading] = useState(() => !fundPageSessionCache?.funds.length);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState("");
+  const [lastRefresh, setLastRefresh] = useState(
+    () => fundPageSessionCache?.lastRefresh || "",
+  );
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [customFunds, setCustomFunds] = useState<string[]>([]);
   const [inputCode, setInputCode] = useState("");
@@ -3489,7 +3504,9 @@ export const FundRadar: React.FC = () => {
   }, []);
 
   // V66.1: Market Indices
-  const [indices, setIndices] = useState<IndexData[]>([]);
+  const [indices, setIndices] = useState<IndexData[]>(
+    () => fundPageSessionCache?.indices || [],
+  );
 
   // V66.0: Holdings
   const [holdings, setHoldings] = useState<FundHolding[]>([]);
@@ -3616,8 +3633,8 @@ export const FundRadar: React.FC = () => {
 
       const [etfRealtime, etfHist, fundHist, otcRealtime] = await withFundLoadDeadline(Promise.all([
         fetchStockData(etfCodes, forceRefresh),
-        fetchStockHistoryBatch(etfCodes),
-        fetchFundHistoryBatch(otcCodes),
+        fetchStockHistoryBatch(etfCodes, { forceRefresh }),
+        fetchFundHistoryBatch(otcCodes, { forceRefresh }),
         fetchFunds(otcCodes, forceRefresh),
       ]));
 
@@ -3700,8 +3717,18 @@ export const FundRadar: React.FC = () => {
       if (finalFunds.length === 0) {
         throw new Error("未取得可用基金数据");
       }
-      setFunds(finalFunds.sort((a, b) => b.score - a.score));
-      setLastRefresh(new Date().toLocaleTimeString());
+      const sortedFunds = finalFunds.sort((a, b) => b.score - a.score);
+      const refreshLabel = new Date().toLocaleTimeString();
+      const cachedIndices = resolvedIndices.length > 0
+        ? resolvedIndices
+        : fundPageSessionCache?.indices || indices;
+      setFunds(sortedFunds);
+      setLastRefresh(refreshLabel);
+      fundPageSessionCache = {
+        funds: sortedFunds,
+        indices: cachedIndices,
+        lastRefresh: refreshLabel,
+      };
     } catch (e) {
       console.error("Fund loading failed", e);
       const message = e instanceof Error ? e.message : "基金服务暂时不可用";
@@ -3787,8 +3814,13 @@ export const FundRadar: React.FC = () => {
       const final = { ...withBenchmark, score, signal, guidance };
       setFunds(prev => {
         const idx = prev.findIndex(f => f.code === code);
-        if (idx >= 0) { const u = [...prev]; u[idx] = final; return u; }
-        return [...prev, final].sort((a, b) => b.score - a.score);
+        const next = idx >= 0
+          ? prev.map((item, itemIndex) => itemIndex === idx ? final : item)
+          : [...prev, final].sort((a, b) => b.score - a.score);
+        if (fundPageSessionCache) {
+          fundPageSessionCache = { ...fundPageSessionCache, funds: next };
+        }
+        return next;
       });
       console.log(`[FundRadar] Incremental load: ${code} (${(rt as any).name}) score=${score.toFixed(1)}`);
     } catch (e) { console.error(`[FundRadar] loadSingleFund(${code}) failed:`, e); }

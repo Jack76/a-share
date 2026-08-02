@@ -27,3 +27,11 @@ test('history hydration drains pending batches without a permanent polling loop'
   assert.match(storeSource, /historyUniverseKey/);
   assert.doesNotMatch(storeSource, /setInterval\(fetchMissingHistory/);
 });
+
+test('fund page reuses its last session view while refreshing in the background', async () => {
+  const fundSource = await readSource('../src/app/components/pages/FundRadar.tsx');
+
+  assert.match(fundSource, /fundPageSessionCache/);
+  assert.match(fundSource, /fetchFundHistoryBatch\(otcCodes, \{ forceRefresh \}\)/);
+  assert.match(fundSource, /fetchStockHistoryBatch\(etfCodes, \{ forceRefresh \}\)/);
+});

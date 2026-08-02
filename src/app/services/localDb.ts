@@ -20,6 +20,7 @@ interface HistoryWriteOptions {
 }
 
 const PREFIX = 'hist_';
+const FUND_HISTORY_PREFIX = 'fund_hist_';
 const FUND_PREFIX = 'fund_';
 const MARKET_KEY = 'market_snapshot';
 
@@ -27,7 +28,7 @@ const MARKET_KEY = 'market_snapshot';
 // Use smart TTL: 20 hours covers overnight + next morning session
 const TTL = 20 * 60 * 60 * 1000; 
 // Intraday fund estimates are decision inputs; keep the browser cache short.
-const FUND_TTL = 2 * 60 * 1000;
+export const FUND_SNAPSHOT_TTL_MS = 2 * 60 * 1000;
 // Intraday snapshots remain short-lived, while the verified closing snapshot
 // can be reused after the bell. This avoids repeatedly cold-scanning 5,800+
 // symbols and losing direct large-order fields on every closed-market reload.
@@ -146,6 +147,82 @@ export const markLocalHistoryUpgradeAttempt = async (
     }
 };
 
+export const inspectLocalFundHistoryBatch = async (codes: string[]) => {
+    try {
+        const keys = codes.map(code => FUND_HISTORY_PREFIX + code);
+        const values = await getMany(keys);
+        const entries: Record<string, LocalHistoryEntry> = {};
+        const missing: string[] = [];
+
+        codes.forEach((code, index) => {
+            const value = values[index] as CachedHistory | undefined;
+            if (value?.data && Array.isArray(value.data) && value.data.length > 0) {
+                entries[code] = {
+                    data: value.data,
+                    cachedAt: value.timestamp,
+                    requestedBars: value.requestedBars,
+                    upgradeAttemptedAt: value.upgradeAttemptedAt,
+                };
+            } else {
+                missing.push(code);
+            }
+        });
+
+        return { entries, missing };
+    } catch (e) {
+        console.warn('IndexedDB Fund History Inspect Error', e);
+        return { entries: {}, missing: codes } as {
+            entries: Record<string, LocalHistoryEntry>;
+            missing: string[];
+        };
+    }
+};
+
+export const setLocalFundHistoryBatch = async (
+    map: Record<string, any[]>,
+    options: HistoryWriteOptions = {},
+) => {
+    try {
+        const entries: [IDBValidKey, CachedHistory][] = Object.entries(map).map(([code, data]) => [
+            FUND_HISTORY_PREFIX + code,
+            {
+                data,
+                timestamp: Date.now(),
+                requestedBars: options.requestedBars,
+                upgradeAttemptedAt: options.upgradeAttemptedAt,
+            },
+        ]);
+        await setMany(entries);
+    } catch (e) {
+        console.warn('IndexedDB Fund History Set Error', e);
+    }
+};
+
+export const markLocalFundHistoryUpgradeAttempt = async (
+    codes: string[],
+    attemptedAt = Date.now(),
+) => {
+    if (codes.length === 0) return;
+    try {
+        const keys = codes.map(code => FUND_HISTORY_PREFIX + code);
+        const values = await getMany(keys);
+        const updates: [IDBValidKey, CachedHistory][] = [];
+
+        codes.forEach((code, index) => {
+            const value = values[index] as CachedHistory | undefined;
+            if (!value?.data || !Array.isArray(value.data)) return;
+            updates.push([
+                FUND_HISTORY_PREFIX + code,
+                { ...value, upgradeAttemptedAt: attemptedAt },
+            ]);
+        });
+
+        if (updates.length > 0) await setMany(updates);
+    } catch (e) {
+        console.warn('IndexedDB Fund History Upgrade Marker Error', e);
+    }
+};
+
 export const getLocalFundsBatch = async (codes: string[]) => {
     try {
         const keys = codes.map(c => FUND_PREFIX + c);
@@ -157,7 +234,7 @@ export const getLocalFundsBatch = async (codes: string[]) => {
 
         codes.forEach((code, index) => {
             const val = values[index] as CachedHistory | undefined;
-            if (val && val.data && (now - val.timestamp < FUND_TTL)) {
+            if (val && val.data && (now - val.timestamp < FUND_SNAPSHOT_TTL_MS)) {
                 results[code] = val.data;
             } else {
                 missing.push(code);
@@ -168,6 +245,32 @@ export const getLocalFundsBatch = async (codes: string[]) => {
     } catch (e) {
         console.warn('IndexedDB Fund Get Error', e);
         return { results: {}, missing: codes };
+    }
+};
+
+export const inspectLocalFundsBatch = async (codes: string[]) => {
+    try {
+        const keys = codes.map(code => FUND_PREFIX + code);
+        const values = await getMany(keys);
+        const entries: Record<string, { data: any; cachedAt: number }> = {};
+        const missing: string[] = [];
+
+        codes.forEach((code, index) => {
+            const value = values[index] as CachedHistory | undefined;
+            if (value?.data) {
+                entries[code] = { data: value.data, cachedAt: value.timestamp };
+            } else {
+                missing.push(code);
+            }
+        });
+
+        return { entries, missing };
+    } catch (e) {
+        console.warn('IndexedDB Fund Inspect Error', e);
+        return { entries: {}, missing: codes } as {
+            entries: Record<string, { data: any; cachedAt: number }>;
+            missing: string[];
+        };
     }
 };
 

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  assessFundHistoryCache,
   assessStockHistoryCache,
+  FUND_HISTORY_REQUESTED_BARS,
   STOCK_HISTORY_CACHE_TTL_MS,
   STOCK_HISTORY_REQUESTED_BARS,
   STOCK_HISTORY_UPGRADE_RETRY_MS,
@@ -51,6 +53,29 @@ test('expired history remains renderable while requesting a refresh', () => {
   const result = assessStockHistoryCache(history(640), {
     cachedAt: NOW - STOCK_HISTORY_CACHE_TTL_MS - 1,
     requestedBars: STOCK_HISTORY_REQUESTED_BARS,
+  }, NOW);
+
+  assert.equal(result.canRender, true);
+  assert.equal(result.isFresh, false);
+  assert.equal(result.shouldRefresh, true);
+});
+
+test('a completed short fund history is not downloaded again on every visit', () => {
+  const result = assessFundHistoryCache(history(18), {
+    cachedAt: NOW - 60_000,
+    requestedBars: FUND_HISTORY_REQUESTED_BARS,
+    upgradeAttemptedAt: NOW - 60_000,
+  }, NOW);
+
+  assert.equal(result.canRender, true);
+  assert.equal(result.shouldUpgrade, false);
+  assert.equal(result.shouldRefresh, false);
+});
+
+test('an expired fund history remains visible while refreshing', () => {
+  const result = assessFundHistoryCache(history(365), {
+    cachedAt: NOW - STOCK_HISTORY_CACHE_TTL_MS - 1,
+    requestedBars: FUND_HISTORY_REQUESTED_BARS,
   }, NOW);
 
   assert.equal(result.canRender, true);

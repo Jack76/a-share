@@ -10,6 +10,10 @@ const serverSource = readFileSync(
   new URL('../supabase/functions/server/index.tsx', import.meta.url),
   'utf8',
 );
+const localDbSource = readFileSync(
+  new URL('../src/app/services/localDb.ts', import.meta.url),
+  'utf8',
+);
 
 test('personal trading state is saved only to the new device-local key', () => {
   assert.match(storeSource, /dragon-quant-device-v2/);
@@ -24,4 +28,9 @@ test('legacy shared trading-state routes are retired without reading shared KV',
   assert.match(serverSource, /api\.get\("\/data",\s*retiredTradingState\)/);
   assert.match(serverSource, /api\.post\("\/data",\s*retiredTradingState\)/);
   assert.doesNotMatch(serverSource, /trading:(stocks|themes|metrics|journal)/);
+});
+
+test('fund NAV history uses a namespace separate from stock price history', () => {
+  assert.match(localDbSource, /FUND_HISTORY_PREFIX = 'fund_hist_'/);
+  assert.match(localDbSource, /FUND_HISTORY_PREFIX \+ code/);
 });

@@ -1,5 +1,7 @@
 export const STOCK_HISTORY_REQUESTED_BARS = 640;
 export const STOCK_HISTORY_PREFERRED_BARS = 600;
+export const FUND_HISTORY_REQUESTED_BARS = 365;
+export const FUND_HISTORY_PREFERRED_BARS = 30;
 export const STOCK_HISTORY_CACHE_TTL_MS = 20 * 60 * 60 * 1000;
 export const STOCK_HISTORY_UPGRADE_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -18,9 +20,11 @@ export interface StockHistoryCacheAssessment {
 
 const getHistoryDay = (point: any): string => point?.day || point?.date || '';
 
-export const assessStockHistoryCache = (
+const assessHistoryCache = (
   history: any[] | undefined,
   metadata: StockHistoryCacheMetadata | undefined,
+  requestedBars: number,
+  preferredBars: number,
   now = Date.now(),
 ): StockHistoryCacheAssessment => {
   const canRender = Array.isArray(history) && history.length > 0;
@@ -37,11 +41,11 @@ export const assessStockHistoryCache = (
   // backend has already been asked for its full 640-bar window, its shorter
   // response is considered complete instead of being upgraded on every load.
   const fullWindowAlreadyRequested =
-    (metadata?.requestedBars || 0) >= STOCK_HISTORY_REQUESTED_BARS;
+    (metadata?.requestedBars || 0) >= requestedBars;
   const upgradeRetryDue =
     now - (metadata?.upgradeAttemptedAt || 0) >= STOCK_HISTORY_UPGRADE_RETRY_MS;
   const shouldUpgrade = canRender &&
-    history!.length < STOCK_HISTORY_PREFERRED_BARS &&
+    history!.length < preferredBars &&
     !fullWindowAlreadyRequested &&
     upgradeRetryDue;
 
@@ -52,3 +56,27 @@ export const assessStockHistoryCache = (
     shouldUpgrade,
   };
 };
+
+export const assessStockHistoryCache = (
+  history: any[] | undefined,
+  metadata: StockHistoryCacheMetadata | undefined,
+  now = Date.now(),
+) => assessHistoryCache(
+  history,
+  metadata,
+  STOCK_HISTORY_REQUESTED_BARS,
+  STOCK_HISTORY_PREFERRED_BARS,
+  now,
+);
+
+export const assessFundHistoryCache = (
+  history: any[] | undefined,
+  metadata: StockHistoryCacheMetadata | undefined,
+  now = Date.now(),
+) => assessHistoryCache(
+  history,
+  metadata,
+  FUND_HISTORY_REQUESTED_BARS,
+  FUND_HISTORY_PREFERRED_BARS,
+  now,
+);

@@ -1,17 +1,22 @@
 import { Stock, MarketIndex, Theme } from '../types';
 import { projectId, publicAnonKey } from '../../../utils/supabase/info'; // Fix: Correct relative path
-import { 
-    getLocalHistoryBatch, 
+import {
     inspectLocalHistoryBatch,
     markLocalHistoryUpgradeAttempt,
-    setLocalHistoryBatch, 
-    getLocalFundsBatch, 
+    setLocalHistoryBatch,
+    inspectLocalFundHistoryBatch,
+    inspectLocalFundsBatch,
+    markLocalFundHistoryUpgradeAttempt,
+    setLocalFundHistoryBatch,
     setLocalFundsBatch,
+    FUND_SNAPSHOT_TTL_MS,
     getLocalMarketSnapshot,
     setLocalMarketSnapshot 
 } from './localDb';
 import {
+  assessFundHistoryCache,
   assessStockHistoryCache,
+  FUND_HISTORY_REQUESTED_BARS,
   STOCK_HISTORY_REQUESTED_BARS,
 } from './historyCachePolicy';
 
@@ -358,11 +363,15 @@ export const fetchStockHistoryBatch = async (
 
 // V8.0 Fetch Fund Historical NAV Data (Batch Support)
 // Separate from stock history because funds use different API (Eastmoney NAV)
-export const fetchFundHistoryBatch = async (codes: string[]): Promise<Record<string, { day: string; close: number }[]>> => {
+export const fetchFundHistoryBatch = async (
+  codes: string[],
+  options: { forceRefresh?: boolean } = {},
+): Promise<Record<string, { day: string; close: number }[]>> => {
   if (!codes || codes.length === 0 || !projectId) return {};
   
-  // 0. Try Load from IndexedDB
-  const { results: localData, missing } = await getLocalHistoryBatch(codes);
+  // Fund NAV history has its own namespace. Sharing the stock-history prefix
+  // allowed identical six-digit fund and stock codes to overwrite each other.
+  const { entries, missing } = await inspectLocalFundHistoryBatch(codes);
   
   // V8.2: Data Sufficiency & Freshness Check for Funds
   // V10.0 Upgrade: Increased to 260 to support 1-Year Performance calculation
@@ -370,32 +379,24 @@ export const fetchFundHistoryBatch = async (codes: string[]): Promise<Record<str
   //        because many funds or newly added ones have < 260 cached records.
   //        Year-perf now gracefully falls back to API-provided values.
   const validLocalData: Record<string, { day: string; close: number }[]> = {};
-  const insufficientDataCodes: string[] = [];
+  const refreshCodes: string[] = [];
+  const upgradeCodes: string[] = [];
   const now = Date.now();
   
-  Object.entries(localData).forEach(([code, history]) => {
-      let isValid = false;
-      if (history && history.length >= 30) {
-          // Check Freshness: If last point is older than 5 days, force refresh
-          // (Funds usually update T+1, plus weekends/holidays)
-          const lastItem = history[history.length - 1];
-          if (lastItem && lastItem.day) {
-             const lastDate = new Date(lastItem.day).getTime();
-             // 5 days = 432,000,000 ms
-             if ((now - lastDate) < 432000000) {
-                 isValid = true;
-             }
-          }
-      }
-      
-      if (isValid) {
-          validLocalData[code] = history;
-      } else {
-          insufficientDataCodes.push(code);
-      }
+  Object.entries(entries).forEach(([code, entry]) => {
+      const assessment = assessFundHistoryCache(entry.data, {
+        cachedAt: entry.cachedAt,
+        requestedBars: entry.requestedBars,
+        upgradeAttemptedAt: entry.upgradeAttemptedAt,
+      }, now);
+      if (assessment.canRender) validLocalData[code] = entry.data;
+      if (options.forceRefresh || assessment.shouldRefresh) refreshCodes.push(code);
+      if (assessment.shouldUpgrade) upgradeCodes.push(code);
   });
 
-  const finalMissing = [...new Set([...missing, ...insufficientDataCodes])];
+  const finalMissing = options.forceRefresh
+    ? [...new Set(codes)]
+    : [...new Set([...missing, ...refreshCodes])];
   
   if (finalMissing.length === 0) {
       return validLocalData;
@@ -411,6 +412,10 @@ export const fetchFundHistoryBatch = async (codes: string[]): Promise<Record<str
   }
 
   const apiResults: Record<string, { day: string; close: number }[]> = {};
+
+  if (upgradeCodes.length > 0) {
+    await markLocalFundHistoryUpgradeAttempt(upgradeCodes, now);
+  }
 
   // Max concurrency 2
   const concurrency = 2;
@@ -460,7 +465,10 @@ export const fetchFundHistoryBatch = async (codes: string[]): Promise<Record<str
   
   // 3. Save new data to IndexedDB
   if (Object.keys(apiResults).length > 0) {
-      setLocalHistoryBatch(apiResults);
+      await setLocalFundHistoryBatch(apiResults, {
+        requestedBars: FUND_HISTORY_REQUESTED_BARS,
+        upgradeAttemptedAt: now,
+      });
   }
   
   console.log(`[FundHistory] Fetched ${Object.keys(apiResults).length} fund histories`);
@@ -496,21 +504,26 @@ export const fetchStockTicks = async (code: string): Promise<any[]> => {
 export const fetchFunds = async (codes: string[], forceRefresh = false): Promise<any[]> => {
   if (!projectId || codes.length === 0) return [];
 
-  // 1. Use the short-lived cache for background loads; explicit refresh bypasses it.
-  let { results: localData, missing } = forceRefresh
-    ? { results: {} as Record<string, any>, missing: codes }
-    : await getLocalFundsBatch(codes);
+  // Keep expired snapshots as a visible fallback while refreshing them.
+  const { entries, missing } = await inspectLocalFundsBatch(codes);
+  const localData = Object.fromEntries(
+    Object.entries(entries).map(([code, entry]) => [code, entry.data]),
+  ) as Record<string, any>;
+  const now = Date.now();
+  const staleCodes = Object.entries(entries)
+    .filter(([, entry]) => now - entry.cachedAt >= FUND_SNAPSHOT_TTL_MS)
+    .map(([code]) => code);
 
   // V10.1 Cache Invalidation: Check if cache is legacy (missing 'ytdChangePercent')
-  // If so, force re-fetch to correct the "Year vs YTD" mismatch
-  const hasLegacyData = Object.values(localData).some((f: any) => f.ytdChangePercent === undefined);
-  if (hasLegacyData) {
-      // console.log("[Cache] Detected legacy fund data, invalidating cache...");
-      localData = {};
-      missing = codes; // Force fetch all
-  }
+  // Refresh only affected entries; keep them as fallback if the request fails.
+  const legacyCodes = Object.entries(localData)
+    .filter(([, fund]: [string, any]) => fund.ytdChangePercent === undefined)
+    .map(([code]) => code);
+  const refreshCodes = forceRefresh
+    ? [...new Set(codes)]
+    : [...new Set([...missing, ...staleCodes, ...legacyCodes])];
 
-  if (missing.length === 0) {
+  if (refreshCodes.length === 0) {
       // console.log(`[Cache] All ${codes.length} funds loaded from IndexedDB`);
       return Object.values(localData);
   }
@@ -519,8 +532,8 @@ export const fetchFunds = async (codes: string[], forceRefresh = false): Promise
   // Batching Strategy: Split into chunks of 10 to avoid server timeout (Edge Function limitation)
   const BATCH_SIZE = 10;
   const chunks: string[][] = [];
-  for (let i = 0; i < missing.length; i += BATCH_SIZE) {
-    chunks.push(missing.slice(i, i + BATCH_SIZE));
+  for (let i = 0; i < refreshCodes.length; i += BATCH_SIZE) {
+    chunks.push(refreshCodes.slice(i, i + BATCH_SIZE));
   }
 
   const apiResultsMap: Record<string, any> = {};
@@ -555,7 +568,7 @@ export const fetchFunds = async (codes: string[], forceRefresh = false): Promise
 
   // 3. Save new data to IndexedDB
   if (Object.keys(apiResultsMap).length > 0) {
-      setLocalFundsBatch(apiResultsMap);
+      await setLocalFundsBatch(apiResultsMap);
   }
 
   // 4. Merge Local + New
