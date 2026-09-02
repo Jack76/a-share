@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseMarginTradingRow,
   parseTencentTurnoverYuan,
-} from '../supabase/functions/server/market_data_parsers.ts';
+} from '../worker/marketDataParsers.ts';
 
 test('腾讯行情成交额使用元字段而不是把万元当成元', () => {
   const fields = Array.from({ length: 40 }, () => '');

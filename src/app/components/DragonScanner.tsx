@@ -7,7 +7,6 @@ import { AlertCircle, TrendingUp, Zap, Target, ArrowRight, Rocket, Star, Chevron
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "./ui/utils";
 import { Progress } from "./ui/progress";
-import { projectId, publicAnonKey } from '../../../utils/supabase/info';
 import { isActionableBullishPrediction } from '../utils/predictionCalibration';
 
 // V67.3: Board type detection for risk awareness (20% limit boards)
@@ -61,7 +60,6 @@ export function DragonScanner() {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${publicAnonKey}`
                         },
                         body: JSON.stringify({
                             signalType: "ASSAULT",

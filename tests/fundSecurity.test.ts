@@ -10,11 +10,11 @@ test('personal fund state never crosses the public client boundary', async () =>
 
   assert.doesNotMatch(source, /\/user\/funds/);
   assert.doesNotMatch(source, /\/user\/fund-holdings/);
-  assert.doesNotMatch(source, /publicAnonKey/);
+  assert.doesNotMatch(source, /Authorization|Bearer/);
 });
 
-test('legacy shared fund-state routes fail closed without touching shared KV', async () => {
-  const source = await readSource('supabase/functions/server/index.tsx');
+test('legacy shared fund-state routes fail closed without touching shared storage', async () => {
+  const source = await readSource('worker/marketApi.ts');
 
   assert.doesNotMatch(source, /trading:customFunds/);
   assert.doesNotMatch(source, /trading:fundHoldings/);

@@ -1,5 +1,4 @@
 import { Stock, MarketIndex, Theme } from '../types';
-import { projectId, publicAnonKey } from '../../../utils/supabase/info'; // Fix: Correct relative path
 import {
     inspectLocalHistoryBatch,
     markLocalHistoryUpgradeAttempt,
@@ -131,13 +130,11 @@ const fetchWithRetry = async (url: string, options: RequestInit, retries = 2, ti
 };
 
 export const searchStockByName = async (query: string): Promise<{ code: string, name: string } | null> => {
-  if (!query || !projectId) return null;
+  if (!query) return null;
 
   const url = `/api/market/search?q=${encodeURIComponent(query)}`;
   try {
-    const resp = await fetchWithRetry(url, {
-      headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-    });
+    const resp = await fetchWithRetry(url, {});
     if (!resp.ok) return null;
     const data = await resp.json();
     return data.result || null;
@@ -148,16 +145,10 @@ export const searchStockByName = async (query: string): Promise<{ code: string, 
 };
 
 export const fetchRealTimeThemes = async (): Promise<Theme[]> => {
-  if (!projectId) return [];
-
   const url = '/api/market/themes';
   
   try {
-    const resp = await fetchWithRetry(url, {
-      headers: {
-        'Authorization': `Bearer ${publicAnonKey}`
-      }
-    }, 0, 8000, true);
+    const resp = await fetchWithRetry(url, {}, 0, 8000, true);
 
     if (!resp.ok) {
         // Suppress 404/500 errors from polluting console unless debugging
@@ -181,7 +172,7 @@ export const fetchRealTimeThemes = async (): Promise<Theme[]> => {
 };
 
 export const fetchStockHistory = async (code: string, period: 'daily' | '1min' | '5min' | '30min' = 'daily'): Promise<StockHistoryPoint[]> => {
-  if (!projectId || !code) return [];
+  if (!code) return [];
   
   if (period === 'daily') {
       // Reuse the batch function to benefit from IndexedDB caching
@@ -200,7 +191,7 @@ export const fetchIntradayBatch = async (
   codes: string[],
   period: '1min' | '5min' | '30min' = '1min'
 ): Promise<Record<string, { day: string; close: number; open: number; high: number; low: number; volume: number }[]>> => {
-  if (!projectId || codes.length === 0) return {};
+  if (codes.length === 0) return {};
   
   const periodMap = { '1min': '1', '5min': '5', '30min': '30' };
   const klt = periodMap[period];
@@ -211,9 +202,7 @@ export const fetchIntradayBatch = async (
   const url = `/api/market/history?codes=${formattedCodes.join(',')}&period=${klt}`;
   
   try {
-    const resp = await fetchWithRetry(url, {
-      headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-    }, 2, 30000, true); // 2 retries, 30s timeout, silent
+    const resp = await fetchWithRetry(url, {}, 2, 30000, true); // 2 retries, 30s timeout, silent
     
     if (!resp.ok) return {};
     
@@ -248,7 +237,7 @@ export const fetchStockHistoryBatch = async (
   codes: string[],
   options: { forceRefresh?: boolean } = {},
 ): Promise<Record<string, StockHistoryPoint[]>> => {
-  if (!projectId || codes.length === 0) return {};
+  if (codes.length === 0) return {};
 
   // 0. Inspect IndexedDB without discarding expired entries. Stale data remains
   // a usable fallback while the network refresh runs.
@@ -316,11 +305,7 @@ export const fetchStockHistoryBatch = async (
 
         try {
             // 3. Timeout 90s (Increased from 60s for stability)
-            const resp = await fetchWithRetry(url, {
-                headers: {
-                    'Authorization': `Bearer ${publicAnonKey}`
-                }
-            }, 2, 90000, true); // V67.7: silent mode to reduce console spam
+            const resp = await fetchWithRetry(url, {}, 2, 90000, true); // V67.7: silent mode to reduce console spam
 
             if (!resp.ok) return;
 
@@ -367,7 +352,7 @@ export const fetchFundHistoryBatch = async (
   codes: string[],
   options: { forceRefresh?: boolean } = {},
 ): Promise<Record<string, { day: string; close: number }[]>> => {
-  if (!codes || codes.length === 0 || !projectId) return {};
+  if (!codes || codes.length === 0) return {};
   
   // Fund NAV history has its own namespace. Sharing the stock-history prefix
   // allowed identical six-digit fund and stock codes to overwrite each other.
@@ -429,11 +414,7 @@ export const fetchFundHistoryBatch = async (
         const url = `/api/market/fund-history?codes=${list}&limit=365`;
 
         try {
-            const resp = await fetchWithRetry(url, {
-                headers: {
-                    'Authorization': `Bearer ${publicAnonKey}`
-                }
-            }, 2, 90000); // Increased timeout to 90s for safety 
+            const resp = await fetchWithRetry(url, {}, 2, 90000); // Increased timeout to 90s for safety
 
             if (!resp.ok) return;
 
@@ -476,7 +457,7 @@ export const fetchFundHistoryBatch = async (
 };
 
 export const fetchStockTicks = async (code: string): Promise<any[]> => {
-  if (!code || !projectId) return [];
+  if (!code) return [];
 
   const formattedCode = formatCode(code);
   // v7.2 Fix: Use standard query parameter format to match server route '/market/ticks'
@@ -484,9 +465,7 @@ export const fetchStockTicks = async (code: string): Promise<any[]> => {
   const url = `/api/market/ticks?code=${formattedCode}`;
 
   try {
-    const resp = await fetchWithRetry(url, {
-      headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-    }, 1, 15000, true); // 1 retry, 15s timeout, silent
+    const resp = await fetchWithRetry(url, {}, 1, 15000, true); // 1 retry, 15s timeout, silent
 
     if (!resp.ok) return [];
 
@@ -502,7 +481,7 @@ export const fetchStockTicks = async (code: string): Promise<any[]> => {
 };
 
 export const fetchFunds = async (codes: string[], forceRefresh = false): Promise<any[]> => {
-  if (!projectId || codes.length === 0) return [];
+  if (codes.length === 0) return [];
 
   // Keep expired snapshots as a visible fallback while refreshing them.
   const { entries, missing } = await inspectLocalFundsBatch(codes);
@@ -543,11 +522,7 @@ export const fetchFunds = async (codes: string[], forceRefresh = false): Promise
     const url = `/api/market/funds?codes=${batchCodes.join(',')}`;
 
     try {
-      const resp = await fetchWithRetry(url, {
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`
-        }
-      }, 2, 45000); // Increased timeout to 45s for safety
+      const resp = await fetchWithRetry(url, {}, 2, 45000); // Increased timeout to 45s for safety
 
       if (!resp.ok) return;
 
@@ -587,12 +562,10 @@ export const fetchFunds = async (codes: string[], forceRefresh = false): Promise
 // V67: Search funds/ETFs by name keyword
 export type FundSearchResult = { code: string; name: string; type: string };
 export const searchFundByKeyword = async (keyword: string): Promise<FundSearchResult[]> => {
-  if (!projectId || !keyword.trim()) return [];
+  if (!keyword.trim()) return [];
   try {
     const url = `/api/market/fund-search?q=${encodeURIComponent(keyword.trim())}`;
-    const resp = await fetchWithRetry(url, {
-      headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-    }, 1, 10000, true);
+    const resp = await fetchWithRetry(url, {}, 1, 10000, true);
     if (!resp.ok) return [];
     const json = await resp.json();
     return json.results || [];
@@ -603,7 +576,7 @@ export const searchFundByKeyword = async (keyword: string): Promise<FundSearchRe
 };
 
 export const fetchStockData = async (codes: string[], forceRefresh = false): Promise<{ data: Record<string, Partial<Stock>>, isMock: boolean }> => {
-  if (codes.length === 0 || !projectId) return { data: {}, isMock: false };
+  if (codes.length === 0) return { data: {}, isMock: false };
 
   // v9.0 Optimization: Chunking for massive requests
   // If we request > 15 stocks, split into multiple parallel backend calls
@@ -654,9 +627,7 @@ export const fetchStockData = async (codes: string[], forceRefresh = false): Pro
 
   const requestPromise = (async () => {
     try {
-      const resp = await fetchWithRetry(url, {
-        headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-      }, 0, 22000, true);
+      const resp = await fetchWithRetry(url, {}, 0, 22000, true);
       
       if (!resp.ok) throw new Error(`Backend stock fetch failed with status ${resp.status}`);
       const json = await resp.json();
@@ -701,8 +672,6 @@ export const fetchStockData = async (codes: string[], forceRefresh = false): Pro
 };
 
 export const fetchMarketIndices = async (): Promise<{ data: MarketIndex[], isMock: boolean }> => {
-  if (!projectId) return { data: [], isMock: false };
-
   const dedupeKey = 'market:indices';
   if (inFlightRequests.has(dedupeKey)) return inFlightRequests.get(dedupeKey);
 
@@ -713,10 +682,7 @@ export const fetchMarketIndices = async (): Promise<{ data: MarketIndex[], isMoc
       // Use fetchWithRetry but with shorter total timeout to avoid blocking UI
       // Enable silent mode to avoid console spam on failure
       const resp = await fetchWithRetry(url, {
-        headers: { 
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'Accept': 'application/json'
-        }
+        headers: { 'Accept': 'application/json' }
       }, 0, 8000, true);
 
       if (!resp.ok) {
@@ -751,7 +717,6 @@ export const fetchMarketIndices = async (): Promise<{ data: MarketIndex[], isMoc
 
 // Summary is the hot path. The 5400-row list is fetched separately at a lower frequency.
 export const fetchMarketStats = async (includeList = false): Promise<MarketStatsSnapshot | null> => {
-  if (!projectId) return null;
   const cacheKey = includeList ? 'market:stats:full' : 'market:stats:summary';
   const now = Date.now();
   const memoryCached = marketStatsCache.get(cacheKey);
@@ -772,9 +737,7 @@ export const fetchMarketStats = async (includeList = false): Promise<MarketStats
   const url = `/api/market/stats${includeList ? '?includeList=true' : ''}`;
   const requestPromise = (async () => {
     try {
-      const resp = await fetchWithRetry(url, {
-        headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-      }, 0, 30000, true);
+      const resp = await fetchWithRetry(url, {}, 0, 30000, true);
 
       if (!resp.ok) return null;
 
@@ -803,11 +766,10 @@ export const fetchMarketStats = async (includeList = false): Promise<MarketStats
 };
 
 export const fetchMarketHealth = async (): Promise<any | null> => {
-  if (!projectId) return null;
   try {
     const resp = await fetchWithRetry(
       '/api/market/health',
-      { headers: { 'Authorization': `Bearer ${publicAnonKey}` } },
+      {},
       0,
       5000,
       true,

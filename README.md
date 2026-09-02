@@ -1,7 +1,7 @@
 
 # 短线交易实操框架
 
-基于 Vite、React 和 Supabase Edge Function 的 A 股短线交易决策界面。
+基于 Vite、React 和 Sites Worker 的 A 股短线交易决策界面。行情数据由站点同源 Worker 代理，个人自选与交易记录保存在当前设备。
 
 ## 本地运行
 

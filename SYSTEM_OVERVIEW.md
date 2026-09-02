@@ -6,14 +6,14 @@
 **版本**: v38.0  
 **核心算法**: 猎杀者 V5.0 + TrapGuard v4.2 + CVD 微观博弈引擎  
 **开发时间**: 2026-01-04  
-**架构模式**: 前后端分离 + Supabase Edge Functions + KV存储
+**架构模式**: React 前端 + Sites Worker 同源 API + 设备本地存储
 
 ---
 
 ## 一、系统定位与核心价值
 
 ### 1.1 定位
-基于 Supabase Edge Functions 的 **A股短线量化交易 Web 应用**，专注于捕捉市场情绪转折点，通过主力资金监控与微观结构分析，识别"诱多陷阱"(TRAP)与"黄金坑"(GOLD)机会。
+基于 Sites Worker 的 **A股短线量化交易 Web 应用**，专注于捕捉市场情绪转折点，通过主力资金监控与微观结构分析，识别"诱多陷阱"(TRAP)与"黄金坑"(GOLD)机会。
 
 ### 1.2 核心价值主张
 - **反诱多算法 (TrapGuard)**: 量价背离、尾盘拉升、假突破、高位派发 4 大诱多模式识别
@@ -34,8 +34,8 @@
 ### 2.1 架构图
 ```
 ┌──────────────┐      ┌──────────────────────┐      ┌──────────────┐
-│   Frontend   │ <──> │ Supabase Edge Func   │ <──> │  Postgres    │
-│   (React)    │      │    Hono Web Server   │      │  KV Store    │
+│   Frontend   │ <──> │     Sites Worker    │      │  本机存储    │
+│   (React)    │      │  Native Web Server  │      │ localStorage │
 └──────────────┘      └──────────────────────┘      └──────────────┘
        │                       │
        │                       └──> Sina Finance API (Market Data Proxy)
@@ -59,26 +59,25 @@
 ### 2.3 后端技术栈
 | 技术 | 用途 |
 |------|------|
-| **Supabase Edge Functions** | 无服务器计算 (Deno 环境) |
-| **Hono** | 轻量级 Web 框架 (`npm:hono`) |
-| **KV Store** | Postgres 键值表 (`kv_store_545d7fd7`) |
+| **Sites Worker** | 无服务器计算 (Cloudflare Workers 运行时) |
+| **Worker API** | 原生 Request/Response 路由与行情代理 |
+| **设备本地存储** | localStorage + IndexedDB，个人数据不上传 |
 | **CORS** | 全域开放，支持跨域请求 |
 | **Logger** | 所有请求日志打印到 console.log |
 
 ### 2.4 API 端点设计
 ```
-/make-server-545d7fd7/health              GET    健康检查
-/make-server-545d7fd7/data                GET    加载所有交易数据 (stocks/themes/metrics/journal)
-/make-server-545d7fd7/data                POST   保存交易数据 (支持部分更新)
-/make-server-545d7fd7/market/themes       GET    实时热门题材 (Sina Finance Proxy)
-/make-server-545d7fd7/market/search       GET    股票代码/名称搜索
-/make-server-545d7fd7/market/ticks        GET    分时 Tick 数据 (CVD 计算原料)
+/api/health                              GET    健康检查
+/api/data                                GET/POST  旧共享状态接口（410，防止恢复跨用户写入）
+/api/market/themes                       GET    实时热门题材 (Sina Finance Proxy)
+/api/market/search                       GET    股票代码/名称搜索
+/api/market/ticks                        GET    分时 Tick 数据 (CVD 计算原料)
 ```
 
 ### 2.5 数据流设计
 ```
 1. 用户打开应用 -> TradingProvider 初始化
-2. 从 Supabase 加载持久化数据 (stocks/themes/metrics/journal)
+2. 从 localStorage/IndexedDB 加载设备本地数据 (stocks/themes/metrics/journal)
 3. 定时刷新 (5s/10s 轮询)：
    - fetchStockData() -> 实时行情 (Sina API)
    - fetchStockHistoryBatch() -> K线历史 (60日)
@@ -89,7 +88,7 @@
    - analyzeTrapRisk() -> 诱多风险
    - generateAIPrediction() -> AI 预判
 5. 更新 Context State -> UI 自动 re-render
-6. 用户操作 (添加/删除股票、更新笔记) -> POST /data 持久化到 KV Store
+6. 用户操作 (添加/删除股票、更新笔记) -> 写入设备本地存储
 ```
 
 ---
@@ -399,7 +398,7 @@ if alpha < -15: "负背离" (量缩价涨, 诱多风险)
 ### 4.4 Themes (题材监控)
 
 #### 数据源
-- **实时题材**: Sina Finance API (通过 Supabase Edge Function 代理)
+- **实时题材**: Sina Finance API (通过 Sites Worker 代理)
 - **预设题材**: PRESET_THEMES (15 个核心赛道)
   - 大金融, 低空经济, 高位妖股, CPO, AI算力, 先进封装, 人形机器人, 固态电池, 半导体设备, 量子科技, 商业航天, 算力租赁, 数据要素, 合成生物, 鸿蒙生态
 
@@ -659,11 +658,11 @@ const TradingContext = createContext<{
 
 #### 数据持久化策略
 ```typescript
-// 1. Supabase KV Store (持久化)
-- stocks       -> kv.set('trading:stocks', stocks)
-- themes       -> kv.set('trading:themes', themes)
-- metrics      -> kv.set('trading:metrics', metrics)
-- journal      -> kv.set('trading:journal', journal)
+// 1. 设备本地存储（持久化）
+- stocks       -> localStorage.setItem('dragon-quant-device-v2', ...)
+- themes       -> localStorage.setItem('dragon-quant-device-v2', ...)
+- metrics      -> localStorage.setItem('dragon-quant-device-v2', ...)
+- journal      -> localStorage.setItem('dragon-quant-device-v2', ...)
 
 // 2. Session Storage (临时缓存)
 - CVD 数据     -> sessionStorage.setItem(`cvd_v1_${code}`, data)
@@ -685,7 +684,7 @@ const TradingContext = createContext<{
 实时行情、分时 Tick、历史 K线
 
 #### 代理策略
-**所有请求必须通过 Supabase Edge Function 代理, 避免 CORS 问题。**
+**所有第三方行情请求通过 Sites Worker 代理，浏览器只访问同源 `/api/*`，避免 CORS 问题。**
 
 #### 主要端点
 ```bash
@@ -851,7 +850,7 @@ setStocks(stocks.map(s => ({ ...s, highlight: true })));
 ### 10.2 v40.0 规划 (中期)
 - **回测引擎**: 基于历史数据验证算法准确率, 生成"胜率/盈亏比"报告
 - **机器学习模型**: 基于 Tensorflow.js, 训练"涨停次日溢价预测模型"
-- **多账户支持**: Supabase Auth + 用户表, 支持多用户隔离
+- **多账户支持**: 接入独立的账户服务与权限模型, 支持多用户隔离
 
 ### 10.3 v41.0+ 规划 (长期)
 - **情绪指数产品化**: 将"市场温度/熵值/拐点信号"打包为独立 API, 对外输出
@@ -902,9 +901,10 @@ http://localhost:5173
      ├─ MarketRadar.tsx           # 市场雷达图
      └─ ...                       # 其他 40+ 组件
 
-/supabase/functions/server/
-  ├─ index.tsx                    # Hono Web Server 入口
-  └─ kv_store.tsx                 # KV Store 工具函数 (禁止修改)
+/worker/
+  ├─ index.ts                     # Sites Worker 入口
+  ├─ marketApi.ts                 # 同源行情与交易 API
+  └─ marketDataParsers.ts         # 行情/融资融券字段解析
 
 /src/styles/
   ├─ theme.css                    # 主题配置 (字号/字重/行高)
@@ -965,14 +965,14 @@ console.groupEnd();
 // ❌ 禁止硬编码 API Key
 const API_KEY = 'sk-1234567890abcdef';
 
-// ✅ 使用环境变量 (Supabase Secrets)
-const API_KEY = Deno.env.get('EAST_MONEY_API_KEY');
+// ✅ 第三方公开行情无需在浏览器暴露密钥；私密凭据应放在 Sites Worker Secret
+const API_KEY = env.EAST_MONEY_API_KEY;
 ```
 
 ### 12.2 数据隐私
-- **用户数据**: KV Store 仅存储股票代码/名称/笔记, 不涉及个人隐私
+- **用户数据**: 仅保存在当前设备的 localStorage/IndexedDB, 不写入共享数据库
 - **第三方 API**: Sina/East Money 为公开数据源, 无需授权
-- **CORS 策略**: Edge Function 开放 `origin: "*"`, 仅用于原型, 生产环境需改为白名单
+- **CORS 策略**: Worker API 仅服务同源页面；如开放跨域，生产环境需改为白名单
 
 ### 12.3 免责声明
 **本系统仅用于学习与研究, 不构成任何投资建议。股市有风险, 投资需谨慎。**
@@ -996,8 +996,8 @@ const API_KEY = Deno.env.get('EAST_MONEY_API_KEY');
 - ⚠️ 缺少回测验证 (无法量化算法准确率)
 
 ### 技术亮点
-- **Supabase Edge Functions**: 无服务器架构, 零运维成本
-- **Hono + Deno**: 轻量高效, 比 Express 快 3-4 倍
+- **Sites Worker**: 无服务器架构, 零运维成本
+- **原生 Request/Response**: 轻量高效, 减少运行时依赖
 - **Context API**: 无需 Redux, 轻量级状态管理
 - **Motion (Framer Motion)**: 流畅动画, 提升用户体验
 - **Recharts**: 声明式图表, 易于定制

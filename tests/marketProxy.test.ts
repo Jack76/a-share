@@ -11,10 +11,9 @@ test('browser market requests use the same-origin worker proxy', async () => {
     readSource('../vite.config.ts'),
   ]);
 
-  assert.doesNotMatch(marketData, /supabase\.co\/functions\/v1/);
   assert.match(marketData, /['"`]\/api\/market\//);
-  assert.match(worker, /pathname\.startsWith\('\/api\/market\/'\)/);
-  assert.match(worker, /pathname\.startsWith\('\/api\/trade\/'\)/);
+  assert.match(worker, /handleMarketApi/);
+  assert.match(worker, /import \{ handleMarketApi \}/);
   assert.match(viteConfig, /run_worker_first:\s*true/);
 });
 

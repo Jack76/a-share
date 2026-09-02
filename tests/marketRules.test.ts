@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateLimitState } from '../supabase/functions/server/market_rules.ts';
+import { calculateLimitState } from '../src/shared/marketRules.ts';
 
 const derived = (code: string, name: string, currentPrice: number, changePercent: number) =>
   calculateLimitState({

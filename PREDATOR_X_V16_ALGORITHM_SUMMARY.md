@@ -1081,7 +1081,7 @@ generateReviewReport(reviewReport);
 
 - [ ] **回测引擎**：基于历史数据验证算法准确率
 - [ ] **机器学习模型**：训练"涨停次日溢价预测模型"
-- [ ] **多账户支持**：Supabase Auth + 用户表
+- [ ] **多账户支持**：接入独立的账户服务与权限模型
 
 ### 5.3 V19.0+ 规划（长期，H2 2026）
 
@@ -1102,9 +1102,9 @@ generateReviewReport(reviewReport);
 | 状态管理 | Context API | - | 全局状态 |
 | 图表库 | Recharts | 2.15.2 | 数据可视化 |
 | 动画引擎 | Motion | 12.23.24 | 交互动画 |
-| 后端架构 | Supabase Edge Functions | - | 无服务器计算 |
-| Web 框架 | Hono | 4.x | API 路由 |
-| 数据库 | Postgres KV Store | - | 数据持久化 |
+| 后端架构 | Sites Worker | - | 无服务器计算 |
+| Web 框架 | 原生 Worker 路由 | - | API 路由 |
+| 数据库 | 无共享数据库 | - | 个人数据设备本地持久化 |
 
 ### 6.2 核心文件索引
 

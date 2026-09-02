@@ -9,7 +9,6 @@ import { ShieldCheck, ShieldAlert, TrendingDown, TrendingUp, Save, BrainCircuit,
 import { toast } from 'sonner';
 import { cn } from './ui/utils';
 import { Flame } from 'lucide-react';
-import { projectId, publicAnonKey } from '../../../utils/supabase/info';
 
 export const HoldingsDiagnosis: React.FC = () => {
   const { stocks, phase, updateStock, removeStock } = useTrading();
@@ -47,7 +46,6 @@ export const HoldingsDiagnosis: React.FC = () => {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${publicAnonKey}`
                     },
                     body: JSON.stringify({
                         code: stock.code,
