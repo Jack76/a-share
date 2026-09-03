@@ -92,11 +92,11 @@ flowchart LR
 
 ## 进一步阅读
 
-- [系统总览](SYSTEM_OVERVIEW.md)：页面、数据流与主要模块说明；
-- [算法审计报告](ALGORITHM_AUDIT_REPORT.md)：算法假设、数据质量和风险边界；
-- [Predator X V16 算法摘要](PREDATOR_X_V16_ALGORITHM_SUMMARY.md)：信号、因子与校准思路；
+- [系统总览](docs/archive/SYSTEM_OVERVIEW.md)：页面、数据流与主要模块说明；
+- [算法审计报告](docs/archive/ALGORITHM_AUDIT_REPORT.md)：算法假设、数据质量和风险边界；
+- [Predator X V16 算法摘要](docs/archive/PREDATOR_X_V16_ALGORITHM_SUMMARY.md)：信号、因子与校准思路；
 - [算法验证记录](ALGORITHM_VALIDATION.md)：已完成的验证项目与结果；
-- [算法改进记录](ALGORITHM_IMPROVEMENTS_COMPLETED.md)：历史优化与修复摘要。
+- [算法改进记录](docs/archive/ALGORITHM_IMPROVEMENTS_COMPLETED.md)：历史优化与修复摘要。
 
 ## 快速开始
 

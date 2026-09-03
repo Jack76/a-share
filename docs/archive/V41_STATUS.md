@@ -17,9 +17,9 @@
 ### 文档文件（3个）
 
 ```
-✅ /ALGORITHM_V41_SUMMARY.md        - 完整总结
-✅ /V41_INTEGRATION_GUIDE.md        - 集成指南
-✅ /V41_STATUS.md                   - 本文件
+✅ ALGORITHM_V41_SUMMARY.md         - 完整总结
+✅ V41_INTEGRATION_GUIDE.md         - 集成指南
+✅ V41_STATUS.md                    - 本文件
 ```
 
 ## 🎯 核心改进

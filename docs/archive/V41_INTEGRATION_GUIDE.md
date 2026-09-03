@@ -68,4 +68,4 @@ technicals.rsiDivergence     // RSI背离
 | expectationGapV41.ts | 预期差v41（10场景） |
 | algorithmV41.ts | 统一导出 |
 
-完整文档: `/ALGORITHM_V41_SUMMARY.md`
+完整文档: `ALGORITHM_V41_SUMMARY.md`

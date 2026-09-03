@@ -1,7 +1,7 @@
 # 📊 算法改进完成报告
 
 **改进日期**: 2026-01-05  
-**基于审核报告**: /ALGORITHM_AUDIT_REPORT.md  
+**基于审核报告**: ALGORITHM_AUDIT_REPORT.md
 
 ---
 
