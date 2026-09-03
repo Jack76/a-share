@@ -695,6 +695,14 @@ export const StockTableRow = React.memo(
                 style={{ width: `${score}%` }}
               />
             </div>
+            {stock.factorScore !== undefined && (
+              <div
+                className="mt-0.5 text-[8px] font-bold text-indigo-600"
+                title={`A股截面量化因子 ${stock.factorScore.toFixed(0)}；有效覆盖 ${(stock.factorCoverage || 0) * 100 >= 1 ? `${((stock.factorCoverage || 0) * 100).toFixed(0)}%` : '不足'}；${stock.factorWarnings?.join('；') || '可作为辅助证据'}`}
+              >
+                因子 {stock.factorScore.toFixed(0)} · {stock.factorRegime || '未知'}
+              </div>
+            )}
             {/* Vendor large-order net; volume-price proxy is only a confirmation flag. */}
             {directNetYuan !== undefined ? (
               <div

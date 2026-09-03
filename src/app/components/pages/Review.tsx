@@ -12,12 +12,18 @@ import { AlertCircle, Target, ShieldCheck, Flame, Zap } from 'lucide-react';
 import { cn } from '../ui/utils';
 import { QuantitativeBattleReport } from '../QuantitativeBattleReport';
 import { getChinaTradingClock } from '../../utils/marketClock';
-import { readPredictionLedger, summarizePredictionLedger } from '../../utils/predictionLedger';
+import {
+  readPredictionLedger,
+  summarizePredictionLedger,
+  summarizePredictionLedgerCalibration,
+} from '../../utils/predictionLedger';
 
 export const Review: React.FC = () => {
   const { journal, setJournal, journalHistory, phase, metrics, stocks, themes, marketIndices, marketStats } = useTrading();
   const [localJournal, setLocalJournal] = useState(journal);
-  const ledgerSummary = summarizePredictionLedger(readPredictionLedger());
+  const ledgerEntries = readPredictionLedger();
+  const ledgerSummary = summarizePredictionLedger(ledgerEntries);
+  const ledgerCalibration = summarizePredictionLedgerCalibration(ledgerEntries);
   
   // Sync when context changes (initial load) & Auto-Date Correction
   useEffect(() => {
@@ -318,6 +324,28 @@ export const Review: React.FC = () => {
                     {ledgerSummary.hitRate === null
                       ? '尚无满 5 个交易日的真实跟踪样本，暂不展示命中率。'
                       : `方向命中率 ${ledgerSummary.hitRate.toFixed(1)}%，仅统计本机持续记录的实时信号。`}
+                  </p>
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    {(['BUY', 'SELL'] as const).map(signalType => {
+                      const side = ledgerCalibration.bySignalType[signalType];
+                      return (
+                        <div key={signalType} className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
+                          <div className="text-[9px] font-black tracking-widest text-slate-400">{signalType === 'BUY' ? '买入' : '卖出'}模型</div>
+                          <div className="mt-1 text-sm font-black text-slate-800">
+                            {side.hitRate === null ? '--' : `${side.hitRate.toFixed(1)}%`}
+                          </div>
+                          <div className="text-[9px] text-slate-400">{side.resolved} 已完成 · {side.pending} 待验证</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[9px] font-bold text-slate-400">
+                    <span>校准样本 {ledgerCalibration.sampleSize}</span>
+                    <span>Brier {ledgerCalibration.brierScore === null ? '--' : ledgerCalibration.brierScore.toFixed(3)}</span>
+                    <span>ECE {ledgerCalibration.expectedCalibrationError === null ? '--' : `${(ledgerCalibration.expectedCalibrationError * 100).toFixed(1)}%`}</span>
+                  </div>
+                  <p className="mt-2 text-[9px] leading-4 text-slate-400">
+                    买卖分开统计；样本未满 30 笔前只作为监控，不代表策略已通过验收。
                   </p>
                 </CardContent>
               </Card>

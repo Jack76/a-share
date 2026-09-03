@@ -242,6 +242,15 @@ export interface Stock {
   resonanceFactor?: number;    // 板块共振因子 (0-100) (v27.0)
   exhaustionSignal?: { isExhausted: boolean; reason: string }; // 动能衰减信号 (v27.0)
   isThemeDropout?: boolean;    // 是否处于题材掉队状态 (v27.0)
+
+  // A 股截面量化因子（按当前全市场截面分位数计算）。这些字段只表示
+  // 可比较的因子证据，不代表“主力身份”或确定性收益预测。
+  factorScore?: number;        // 综合因子分数 (0-100)
+  factorCoverage?: number;     // 因子有效覆盖率 (0-1)
+  factorRegime?: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
+  factorBreakdown?: Record<string, number>; // 各因子分位数 (0-100)
+  factorSources?: Record<string, string>;
+  factorWarnings?: string[];
   
   // AI Predictions
   aiPrediction?: {
@@ -280,6 +289,9 @@ export interface Stock {
         sampleSize?: number;
         marketRegime?: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
         marketDataQuality?: number;
+        factorScore?: number;
+        factorCoverage?: number;
+        factorRegime?: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
         warnings?: string[];
         description: string;
         direction: 'UP' | 'DOWN' | 'SIDEWAYS';

@@ -56,6 +56,7 @@ import { getDirectLargeOrderNetYuan } from '../utils/capitalFlow';
 import { getChinaTradingClock } from '../utils/marketClock';
 import { syncPredictionLedger } from '../utils/predictionLedger';
 import { sanitizeAdvisoryLanguage } from '../utils/advisoryLanguage';
+import { buildAShareFactorProfiles } from '../utils/aShareFactors';
 
 interface TradingState {
   stocks?: Stock[];
@@ -360,16 +361,40 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
 
       // Step 2: Complex metrics requiring role/all stocks
+      // A 股截面因子先于单股信号计算，确保每个标的都使用同一批可比较的
+      // 数据，并在回放/实时刷新时遵守当前市场状态配权。
+      const shIndex = currentIndices.find(i => i.code.includes('sh000001'));
+      const factorContext: MarketCalibrationContext = {
+        ...marketCalibration,
+        indexChange: shIndex?.changePercent ?? marketCalibration?.indexChange,
+        isIndexBull: indexTech?.isBull ?? marketCalibration?.isIndexBull,
+        isIndexStrong: indexTech?.isStrong ?? marketCalibration?.isIndexStrong,
+      };
+      const factorProfiles = buildAShareFactorProfiles(updated, factorContext);
+      const factorEnrichedStocks = updated.map(stock => {
+        const profile = factorProfiles.get(stock.code);
+        if (!profile) return stock;
+        return {
+          ...stock,
+          factorScore: profile.score,
+          factorCoverage: profile.coverage,
+          factorRegime: profile.regime,
+          factorBreakdown: profile.breakdown,
+          factorSources: profile.sources,
+          factorWarnings: profile.warnings,
+        };
+      });
+
       // V64.0: Detect event-driven mode ONCE for all stocks (cross-sector divergence scan)
-      const eventDrivenDetection = detectEventDrivenMode(updated);
+      const eventDrivenDetection = detectEventDrivenMode(factorEnrichedStocks);
       if (eventDrivenDetection.mode !== 'NONE') {
         console.log(`[V64.0 EVENT MODE] ${eventDrivenDetection.mode} | ${eventDrivenDetection.description}`);
       }
 
-      return updated.map(s => {
-        const resonance = calculateResonance(s, updated, marketThemes);
+      return factorEnrichedStocks.map(s => {
+        const resonance = calculateResonance(s, factorEnrichedStocks, marketThemes);
         // v41.0 Upgrade: Use new TrapGuard and AI Prediction
-        const trapResult = analyzeTrapRiskV41(s, currentPhase, updated);
+        const trapResult = analyzeTrapRiskV41(s, currentPhase, factorEnrichedStocks);
         const premium = calculatePremiumExpectation(s, marketTemp);
         
         // Use Predator Engine for consistent signaling
@@ -417,7 +442,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             undefined,                                  // intentContext
             eventDrivenDetection,                       // V64.0 event-driven context
             undefined,                                  // runtimeContext
-            updated,                                    // 分层历史样本池
+            factorEnrichedStocks,                       // 分层历史样本池
         );
         
         const prediction = {

@@ -10,6 +10,7 @@ import {
   getBuySignalVetoReason,
   resolveMarketRegime,
   type MarketCalibrationContext,
+  type MarketRegime,
   type PredictionReliability,
   type CalibrationStatus,
 } from "./predictionCalibration";
@@ -97,6 +98,9 @@ export interface PredatorSignal {
     sampleSize?: number;
     marketRegime?: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'DIVERGENT' | 'UNKNOWN';
     marketDataQuality?: number;
+    factorScore?: number;
+    factorCoverage?: number;
+    factorRegime?: MarketRegime;
     confidenceLow?: number;
     confidenceHigh?: number;
     warnings?: string[];
@@ -744,6 +748,16 @@ export const analyzeStockSignal = (
 
   if (isCapacityDragon) prob += 5;
 
+  // A 股截面量化因子只做小幅校准，不直接改写形态/风控信号。因子覆盖
+  // 不足时保持原有规则，避免把缺失数据误当成弱势或强势。
+  const factorScore = Number(stock.factorScore);
+  const factorCoverage = Number(stock.factorCoverage);
+  if (Number.isFinite(factorScore) && Number.isFinite(factorCoverage) && factorCoverage >= 0.45) {
+    const centeredFactor = Math.max(-50, Math.min(50, factorScore - 50));
+    const directionSign = expectedDirection === 'UP' ? 1 : expectedDirection === 'DOWN' ? -1 : 0;
+    prob += centeredFactor * 0.12 * directionSign;
+  }
+
   prob = Math.min(95, Math.max(40, prob));
 
   // --- 6. Scoring & Stargate ---
@@ -758,6 +772,13 @@ export const analyzeStockSignal = (
   // V12.0 Capacity Bonus (Base Score)
   if (isCapacityDragon) {
     score += 10; // Safe haven premium
+  }
+
+  if (Number.isFinite(factorScore) && Number.isFinite(factorCoverage) && factorCoverage >= 0.45) {
+    const centeredFactor = Math.max(-50, Math.min(50, factorScore - 50));
+    score += centeredFactor * 0.16;
+    if (factorScore >= 70) adviceText += " [量化因子偏强]";
+    else if (factorScore <= 30) adviceText += " [量化因子偏弱]";
   }
 
   // --- V11.0 Ghost Protocol: Stealth Accumulation Detection ---
@@ -3389,9 +3410,15 @@ export const analyzeStockSignal = (
       sampleSize: calibratedPrediction.sampleSize,
       marketRegime: calibratedPrediction.marketRegime,
       marketDataQuality: calibratedPrediction.marketDataQuality,
+      factorScore: Number.isFinite(factorScore) ? factorScore : undefined,
+      factorCoverage: Number.isFinite(factorCoverage) ? factorCoverage : undefined,
+      factorRegime: stock.factorRegime,
       confidenceLow: calibratedPrediction.confidenceLow,
       confidenceHigh: calibratedPrediction.confidenceHigh,
-      warnings: calibratedPrediction.warnings,
+      warnings: [...new Set([
+        ...calibratedPrediction.warnings,
+        ...(stock.factorWarnings || []),
+      ])],
       description: predictionDesc || (expectedDirection === "UP"
           ? "看涨 (Bullish)"
           : expectedDirection === "DOWN"

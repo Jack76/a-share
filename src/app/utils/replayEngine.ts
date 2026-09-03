@@ -20,6 +20,8 @@ import {
   type StrategyAcceptanceResult,
   type StrategyTradeObservation,
 } from './strategyMetrics';
+import { buildAShareFactorProfiles } from './aShareFactors';
+import { calculateLimitState } from '../../shared/marketRules';
 
 export interface ReplaySnapshot {
   timestamp: MarketTimestamp;
@@ -43,6 +45,8 @@ export interface ReplayConfig {
   initialCapital: number;
   positionFraction?: number;
   commissionRate?: number;
+  /** A 股券商常见最低佣金；传 0 可关闭最低佣金。 */
+  minimumCommission?: number;
   sellTaxRate?: number;
   slippageBps?: number;
   acceptancePolicy?: StrategyAcceptancePolicy;
@@ -161,6 +165,7 @@ export const runDecisionReplay = (
   }
   const positionFraction = Math.min(1, Math.max(0.01, config.positionFraction ?? 0.2));
   const commissionRate = Math.max(0, config.commissionRate ?? 0.0003);
+  const minimumCommission = Math.max(0, config.minimumCommission ?? 5);
   const sellTaxRate = Math.max(0, config.sellTaxRate ?? 0.0005);
   const slippageRate = Math.max(0, config.slippageBps ?? 5) / 10_000;
   const strictMarketContext = config.strictMarketContext ?? true;
@@ -187,7 +192,10 @@ export const runDecisionReplay = (
     const sharesToSell = Math.min(currentPosition.shares, Math.max(100, requestedShares));
     const exitPrice = Math.max(0, rawPrice * (1 - slippageRate));
     const exitNotional = sharesToSell * exitPrice;
-    const fees = exitNotional * (commissionRate + sellTaxRate);
+    const commission = exitNotional > 0
+      ? Math.max(minimumCommission, exitNotional * commissionRate)
+      : 0;
+    const fees = commission + exitNotional * sellTaxRate;
     const proceeds = exitNotional - fees;
     const allocatedEntryNotional = currentPosition.entryNotional * (sharesToSell / currentPosition.shares);
     const pnl = proceeds - allocatedEntryNotional;
@@ -219,6 +227,20 @@ export const runDecisionReplay = (
     assertPointInTimeSnapshot(snapshot, timestamp, strictMarketContext);
     const stock = snapshot.stock;
     const currentPrice = stock.currentPrice as number;
+    const limitState = calculateLimitState({
+      code: stock.code,
+      name: stock.name,
+      currentPrice,
+      previousClose: stock.prevClose || currentPrice,
+      changePercent: stock.changePercent || 0,
+      sourceLimitUpPrice: stock.limitUpPrice,
+      sourceLimitDownPrice: stock.limitDownPrice,
+    });
+    // Upstream flags are retained as an explicit override for feeds that mark
+    // a locked order book while the last traded price has not ticked exactly
+    // onto the derived cent price yet.
+    const isLimitUp = Boolean(stock.isLimitUp || limitState.isLimitUp);
+    const isLimitDown = Boolean(stock.isLimitDown || limitState.isLimitDown);
 
     if (previousPrediction) {
       predictions.push({
@@ -229,16 +251,17 @@ export const runDecisionReplay = (
     }
 
     if (pendingBuy && !position) {
-      if (stock.isLimitUp) {
+      if (isLimitUp) {
         rejections.push({ timestamp, side: 'BUY', reason: '涨停排队成交不可复现' });
       } else {
         const rawEntry = stock.open || currentPrice;
         const entryPrice = rawEntry * (1 + slippageRate);
         const budget = Math.min(cash, cash * positionFraction);
-        const shares = Math.floor((budget / (entryPrice * (1 + commissionRate))) / 100) * 100;
+        const shares = Math.floor((budget / (entryPrice * (1 + commissionRate)) - minimumCommission / entryPrice) / 100) * 100;
         if (shares >= 100) {
           const grossNotional = shares * entryPrice;
-          const entryNotional = grossNotional * (1 + commissionRate);
+          const entryCommission = Math.max(minimumCommission, grossNotional * commissionRate);
+          const entryNotional = grossNotional + entryCommission;
           cash -= entryNotional;
           position = {
             shares,
@@ -258,7 +281,7 @@ export const runDecisionReplay = (
     }
 
     if (pendingSell && position && clock.tradeDate !== position.entryTradeDate) {
-      if (stock.isLimitDown) {
+      if (isLimitDown) {
         rejections.push({ timestamp, side: 'SELL', reason: '跌停封单无法假设成交' });
       } else {
         closePosition(position, timestamp, stock.open || currentPrice, 'SIGNAL', pendingSell.fraction);
@@ -269,7 +292,25 @@ export const runDecisionReplay = (
     }
 
     const trapRisk = analyzeTrapRiskV41(stock, snapshot.phase, snapshot.allStocks);
-    const evaluatedStock = { ...stock, trapRiskScore: trapRisk.score };
+    // Rebuild factors for every point-in-time snapshot. A replay must not
+    // reuse today's cross-section ranks, otherwise the factor score itself
+    // becomes a look-ahead leak.
+    const factorProfile = buildAShareFactorProfiles(
+      snapshot.allStocks,
+      snapshot.marketContext,
+    ).get(stock.code);
+    const evaluatedStock = {
+      ...stock,
+      trapRiskScore: trapRisk.score,
+      ...(factorProfile ? {
+        factorScore: factorProfile.score,
+        factorCoverage: factorProfile.coverage,
+        factorRegime: factorProfile.regime,
+        factorBreakdown: factorProfile.breakdown,
+        factorSources: factorProfile.sources,
+        factorWarnings: factorProfile.warnings,
+      } : {}),
+    };
     const theme = snapshot.themes.find(item => item.name === stock.concept);
     const sectorContext = theme ? {
       rank: snapshot.themes.indexOf(theme) + 1,
@@ -337,7 +378,7 @@ export const runDecisionReplay = (
     };
 
     if (position && clock.tradeDate !== position.entryTradeDate) {
-      if (stock.isLimitDown) {
+      if (isLimitDown) {
         rejections.push({ timestamp, side: 'SELL', reason: '跌停封单无法假设成交' });
       } else {
         const dayOpen = stock.open || currentPrice;
@@ -379,7 +420,16 @@ export const runDecisionReplay = (
   const last = ordered[ordered.length - 1];
   if (position && last) {
     const clock = getChinaTradingClock(last.timestamp);
-    if (clock.tradeDate !== position.entryTradeDate && !last.stock.isLimitDown) {
+    const lastLimitState = calculateLimitState({
+      code: last.stock.code,
+      name: last.stock.name,
+      currentPrice: last.stock.currentPrice as number,
+      previousClose: last.stock.prevClose || (last.stock.currentPrice as number),
+      changePercent: last.stock.changePercent || 0,
+      sourceLimitUpPrice: last.stock.limitUpPrice,
+      sourceLimitDownPrice: last.stock.limitDownPrice,
+    });
+    if (clock.tradeDate !== position.entryTradeDate && !(last.stock.isLimitDown || lastLimitState.isLimitDown)) {
       closePosition(position, clock.timestampMs, last.stock.currentPrice as number, 'END_OF_REPLAY');
       equityCurve.push({ timestamp: clock.timestampMs, equity: cash });
     }

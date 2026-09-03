@@ -189,3 +189,92 @@ export const summarizePredictionLedger = (entries: PredictionLedgerEntry[]) => {
     hitRate: resolved.length > 0 ? (correct / resolved.length) * 100 : null,
   };
 };
+
+export interface PredictionLedgerSideSummary {
+  total: number;
+  pending: number;
+  resolved: number;
+  correct: number;
+  hitRate: number | null;
+}
+
+export interface PredictionLedgerCalibrationSummary {
+  sampleSize: number;
+  brierScore: number | null;
+  expectedCalibrationError: number | null;
+  bySignalType: Record<'BUY' | 'SELL', PredictionLedgerSideSummary>;
+}
+
+const summarizeLedgerSide = (
+  entries: PredictionLedgerEntry[],
+  signalType: PredictionLedgerEntry['signalType'],
+): PredictionLedgerSideSummary => {
+  const sideEntries = entries.filter(entry => entry.signalType === signalType);
+  const resolved = sideEntries.filter(entry => entry.status === 'RESOLVED');
+  const correct = resolved.filter(entry => entry.outcome === 'CORRECT').length;
+  return {
+    total: sideEntries.length,
+    pending: sideEntries.length - resolved.length,
+    resolved: resolved.length,
+    correct,
+    hitRate: resolved.length > 0 ? (correct / resolved.length) * 100 : null,
+  };
+};
+
+/**
+ * Calibration metrics for the local, point-in-time prediction ledger.
+ * FLAT observations are left out of Brier/ECE because they are neither a
+ * directional success nor a directional failure. BUY and SELL remain split so
+ * a good entry model cannot hide a weak exit model (or vice versa).
+ */
+export const summarizePredictionLedgerCalibration = (
+  entries: PredictionLedgerEntry[],
+): PredictionLedgerCalibrationSummary => {
+  const observations = entries
+    .filter(entry => entry.status === 'RESOLVED' && entry.outcome !== 'FLAT' && Number.isFinite(entry.probability))
+    .map(entry => ({
+      probability: Math.min(1, Math.max(0, entry.probability / 100)),
+      outcome: entry.outcome === 'CORRECT' ? 1 : 0,
+    }));
+
+  if (observations.length === 0) {
+    return {
+      sampleSize: 0,
+      brierScore: null,
+      expectedCalibrationError: null,
+      bySignalType: {
+        BUY: summarizeLedgerSide(entries, 'BUY'),
+        SELL: summarizeLedgerSide(entries, 'SELL'),
+      },
+    };
+  }
+
+  const brierScore = observations.reduce(
+    (sum, observation) => sum + (observation.probability - observation.outcome) ** 2,
+    0,
+  ) / observations.length;
+  let expectedCalibrationError = 0;
+  for (let index = 0; index < 10; index++) {
+    const lower = index / 10;
+    const upper = (index + 1) / 10;
+    const bin = observations.filter(observation =>
+      observation.probability >= lower && (index === 9
+        ? observation.probability <= upper
+        : observation.probability < upper),
+    );
+    if (!bin.length) continue;
+    const confidence = bin.reduce((sum, observation) => sum + observation.probability, 0) / bin.length;
+    const accuracy = bin.reduce((sum, observation) => sum + observation.outcome, 0) / bin.length;
+    expectedCalibrationError += (bin.length / observations.length) * Math.abs(confidence - accuracy);
+  }
+
+  return {
+    sampleSize: observations.length,
+    brierScore: Math.round(brierScore * 1_000_000) / 1_000_000,
+    expectedCalibrationError: Math.round(expectedCalibrationError * 1_000_000) / 1_000_000,
+    bySignalType: {
+      BUY: summarizeLedgerSide(entries, 'BUY'),
+      SELL: summarizeLedgerSide(entries, 'SELL'),
+    },
+  };
+};

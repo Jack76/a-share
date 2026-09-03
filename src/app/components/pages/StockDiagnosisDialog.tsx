@@ -26,6 +26,7 @@ import {
 } from '../../utils/capitalFlow';
 import { assessMarginTradingRisk } from '../../utils/marginRisk';
 import { sanitizeAdvisoryLanguage } from '../../utils/advisoryLanguage';
+import { ASHARE_FACTOR_LABELS, type AShareFactorName } from '../../utils/aShareFactors';
 
 interface StockDiagnosisDialogProps {
   isOpen: boolean;
@@ -1730,6 +1731,45 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
                         </div>
                     </div>
                 </div>
+
+                {stock.factorScore !== undefined && (
+                    <div className="rounded-3xl border border-indigo-100 bg-indigo-50/50 p-4 shadow-sm md:p-6">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <BarChart3 className="size-4 text-indigo-600" />
+                                    <h3 className="text-sm font-black tracking-wider text-slate-800">量化因子截面</h3>
+                                    <Badge variant="outline" className="border-indigo-200 bg-white text-[9px] font-black text-indigo-700">
+                                        {stock.factorRegime || 'UNKNOWN'}
+                                    </Badge>
+                                </div>
+                                <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                                    同一批 A 股标的内的分位数排序；覆盖率不足时只作辅助，不等同于主力身份判断。
+                                </p>
+                            </div>
+                            <div className="text-left sm:text-right">
+                                <div className="font-mono text-2xl font-black text-indigo-700">{stock.factorScore.toFixed(0)}</div>
+                                <div className="text-[9px] font-bold text-slate-500">综合因子 · 覆盖 {(stock.factorCoverage || 0) * 100 >= 1 ? `${((stock.factorCoverage || 0) * 100).toFixed(0)}%` : '不足'}</div>
+                            </div>
+                        </div>
+                        {Object.keys(stock.factorBreakdown || {}).length > 0 && (
+                            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                {(Object.entries(stock.factorBreakdown || {}) as [string, number][]).map(([key, value]) => (
+                                    <div key={key} className="rounded-xl border border-indigo-100 bg-white/80 p-2.5">
+                                        <div className="flex items-center justify-between gap-2 text-[10px] font-black text-slate-600">
+                                            <span>{ASHARE_FACTOR_LABELS[key as AShareFactorName] || key}</span>
+                                            <span className="font-mono text-indigo-700">{value.toFixed(0)}</span>
+                                        </div>
+                                        <Progress value={value} className="mt-1 h-1 bg-indigo-100" indicatorClassName="bg-indigo-500" />
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {stock.factorWarnings?.length ? (
+                            <div className="mt-3 text-[10px] leading-4 text-amber-700">提示：{stock.factorWarnings.join('；')}</div>
+                        ) : null}
+                    </div>
+                )}
 
                 <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                     <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/70 px-4 py-3 md:flex-row md:items-center md:justify-between md:px-6">
