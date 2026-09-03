@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 在线体验 Dragon Quant
+    url: https://dragon-quant-trading.jack0217.chatgpt.site
+    about: 直接打开公开站点进行体验测试
+  - name: 查看项目说明
+    url: https://github.com/Jack76/a-share#公开测试招募
+    about: 了解重点测试场景、数据限制和隐私提示

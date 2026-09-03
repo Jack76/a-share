@@ -1,0 +1,42 @@
+name: 功能建议
+description: 提议能改善行情研究、交易计划或复盘体验的功能
+title: "[建议] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢参与 Dragon Quant 公开测试。请从实际使用场景出发描述建议，避免提交具体买卖荐股请求。
+  - type: dropdown
+    id: area
+    attributes:
+      label: 相关模块
+      options:
+        - 市场总览
+        - 龙头列表
+        - 个股详情
+        - 历史趋势与量化
+        - 基金页面
+        - 交易与复盘
+        - 性能与移动端
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 当前流程中哪里不够清楚、可靠或高效？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 描述你希望新增或调整的行为、字段或交互
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 其他方案或参考
+      description: 如果有替代做法、竞品或截图，也可以附在这里

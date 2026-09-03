@@ -12,6 +12,19 @@
 
 [如果 GitHub 页面未直接显示播放器，点击下载 MP4](public/dragon-quant-promo.mp4)
 
+## 公开测试招募
+
+Dragon Quant 现在开放真实用户体验测试，欢迎 A 股短线交易者、量化研究者和前端开发者试用并反馈问题。无需安装，打开[在线体验](https://dragon-quant-trading.jack0217.chatgpt.site)即可开始。
+
+重点欢迎测试以下场景：
+
+- 市场总览、情绪温度和行情新鲜度是否符合盘中观察习惯；
+- 龙头列表的涨跌、证据完整度、详情诊断以及买入/卖出触发条件；
+- 历史趋势、量化因子、资金数据和基金页面的加载速度与完整度；
+- 刷新、移动端布局、本地保存、缓存恢复和长时间使用时的流畅度。
+
+发现问题时，请通过[问题反馈](https://github.com/Jack76/a-share/issues/new?template=bug_report.yml)提交；有改进想法可以提交[功能建议](https://github.com/Jack76/a-share/issues/new?template=feature_request.yml)。反馈最好附上浏览器、发生时间、复现步骤和截图，但请勿提交 API Key、访问令牌或个人敏感信息。
+
 > 这是研究与决策辅助工具，不是自动下单系统。任何信号、预测、止损和仓位建议都不构成投资建议，也不保证收益。
 
 ## 项目定位
