@@ -539,7 +539,7 @@ export const StockTableRow = React.memo(
     const isSelfSelect = stock.tags?.includes('SelfSelect');
 
     return (
-      <TableRow className="group transition-none border-border/30 hover:bg-slate-50/50 h-[80px] md:h-[80px] overflow-hidden transform-gpu relative">
+      <TableRow className="stock-table-row group transition-none border-border/30 hover:bg-slate-50/50 h-[80px] md:h-[80px] overflow-hidden transform-gpu relative">
         <TableCell className="sticky left-0 z-10 bg-white group-hover:bg-slate-50 transition-colors pl-2 md:pl-8 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] w-[90px] md:w-auto">
           <div className="flex flex-col justify-center h-full py-1">
             <button

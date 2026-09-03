@@ -185,6 +185,24 @@ const isMarketStatsUsable = (snapshot: MarketStatsSnapshot | null): snapshot is 
     sourceIsFreshEnough;
 };
 
+// Breadth requires a paginated upstream scan. Give the first paint a bounded
+// wait, then let the same request finish in the background and hydrate the
+// verified market context when it is ready.
+const MARKET_STATS_UI_BUDGET_MS = 3_500;
+const resolveWithin = async <T,>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>(resolve => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
 const defaultJournal: JournalEntry = {
   date: getChinaTradingClock().tradeDate,
   phase: 'Chaos',
@@ -227,6 +245,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const marketListInFlightRef = useRef<Promise<void> | null>(null);
   const lastGoodMarketStatsRef = useRef<{ snapshot: MarketStatsSnapshot; receivedAt: number } | null>(null);
   const quoteRefreshCursorRef = useRef(0);
+  const intradayAttemptedAtRef = useRef<Map<string, number>>(new Map());
 
   const indexHistoryRef = useRef<{ close: number }[]>([]);
 
@@ -779,25 +798,17 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setMarketRefreshStatus('refreshing');
     setMarketRefreshError(null);
     try {
-        // Resolve the compact breadth summary before scoring stocks. Starting
-        // the full-list request at the same time creates two cold scans and can
-        // let predictions permanently capture UNAVAILABLE while the market UI
-        // recovers a few seconds later.
+        // Resolve the compact breadth summary before scoring stocks, but cap
+        // how long a cold upstream scan can block the first usable quote wave.
+        // The full-list background request below coalesces with this request
+        // inside the worker and hydrates the market context when it completes.
+        const marketStatsSummaryPromise = fetchMarketStats(false);
         const [{ data: indices }, marketStatsSummary, realTimeThemes] = await Promise.all([
           fetchMarketIndices(),
-          fetchMarketStats(false),
+          resolveWithin(marketStatsSummaryPromise, MARKET_STATS_UI_BUDGET_MS, null),
           fetchRealTimeThemes()
         ]);
         let marketStatsResult = marketStatsSummary;
-        if (!isMarketStatsUsable(marketStatsResult)) {
-          const fullSnapshot = await fetchMarketStats(true);
-          if (isMarketStatsUsable(fullSnapshot)) {
-            marketStatsResult = fullSnapshot;
-            if (fullSnapshot.list && fullSnapshot.list.length >= 4_000) {
-              marketListRef.current = { list: fullSnapshot.list, fetchedAt: Date.now() };
-            }
-          }
-        }
         if (isMarketStatsUsable(marketStatsResult)) {
           lastGoodMarketStatsRef.current = { snapshot: marketStatsResult, receivedAt: Date.now() };
         }
@@ -1194,12 +1205,18 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
               .filter(s => {
                 // Skip if cache is still fresh
                 const cached = s.intradayIndicators;
-                return !cached?.fetchedAt || (nowTs - cached.fetchedAt > INTRADAY_CACHE_MS);
+                const lastAttemptedAt = intradayAttemptedAtRef.current.get(s.code) || 0;
+                return (!cached?.fetchedAt || (nowTs - cached.fetchedAt > INTRADAY_CACHE_MS)) &&
+                  nowTs - lastAttemptedAt >= 2 * 60 * 1000;
               })
               .slice(0, 15); // Hard cap
 
             if (intradayCandidates.length > 0) {
               console.log(`[V66.7 Intraday] Batch-fetching 1min data for ${intradayCandidates.length} key stocks`);
+              // A short/failed upstream response is still an attempt. Keep it
+              // out of the next 30-second refresh wave so retries cannot form
+              // a tight loop while the market endpoint is degraded.
+              intradayCandidates.forEach(stock => intradayAttemptedAtRef.current.set(stock.code, nowTs));
               
               // V66.7: Single batch request instead of N individual requests
               // Fixes "Failed to fetch" caused by edge function overload
@@ -1381,11 +1398,11 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             marketEvents: [...newEvents, ...(prev.marketEvents || [])].slice(0, 20)
           }));
 
-          // Only fetch the scanner-sized list after the summary has already
-          // calibrated this refresh. The edge cache then makes this request
-          // cheap, and it cannot race the prediction status.
-          refreshMarketListInBackground();
         }
+        // Fetch the scanner-sized list after the quote wave regardless of
+        // whether the soft summary budget elapsed. It is deduped locally and
+        // coalesced by the worker, so this never creates a second cold scan.
+        refreshMarketListInBackground();
     } catch (error) {
         console.error("Refresh failed", error);
         const message = error instanceof Error ? error.message : '行情服务暂时不可用';
@@ -1547,7 +1564,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return `${history.length}:${first.day}:${last.day}:${last.close}`;
     };
 
-    const scheduleNextBatch = (delayMs = 250) => {
+    const scheduleNextBatch = (delayMs = 750) => {
       if (cancelled || nextBatchTimer !== undefined) return;
       nextBatchTimer = window.setTimeout(() => {
         nextBatchTimer = undefined;
@@ -1628,7 +1645,10 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (!document.hidden) scheduleNextBatch(0);
     };
     document.addEventListener('visibilitychange', resumeWhenVisible);
-    scheduleNextBatch(250);
+    // Let the first quote wave and initial layout settle before starting the
+    // background history drain. History remains lazy and stale-while-revalidate
+    // but no longer competes with the critical first paint.
+    scheduleNextBatch(1200);
     
     return () => {
       cancelled = true;

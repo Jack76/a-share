@@ -556,8 +556,13 @@ interface MarketStatsSnapshot {
   };
 }
 
-const MARKET_STATS_TTL = 8_000;
-const MARKET_STATS_STALE_TTL = 60_000;
+// The breadth snapshot is expensive to build (Eastmoney requires dozens of
+// paginated requests). Keep one verified snapshot warm for a minute so the
+// dashboard's live quote polling does not repeatedly trigger the same scan.
+// A five-minute stale window still gives the UI a last-known market context
+// during a transient upstream outage.
+const MARKET_STATS_TTL = 60_000;
+const MARKET_STATS_STALE_TTL = 5 * 60_000;
 let marketStatsCache: { snapshot: MarketStatsSnapshot; storedAt: number } | null = null;
 let marketStatsInFlight: Promise<MarketStatsSnapshot> | null = null;
 let marketStatsLastError: { message: string; at: string } | null = null;
@@ -798,7 +803,7 @@ const handleMarketStats = async (url: URL) => {
       cache,
     } as MarketStatsSnapshot['quality'];
     return json({ data: { ...snapshot, list: includeList ? snapshot.list : undefined, quality } }, 200, {
-      'Cache-Control': 'public, max-age=3, stale-while-revalidate=10',
+      'Cache-Control': 'public, max-age=15, stale-while-revalidate=60',
       'X-Market-Data-Status': quality.status,
       'X-Market-Data-Coverage': String(quality.coverage),
     });

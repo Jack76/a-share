@@ -3451,6 +3451,7 @@ export const FundRadar: React.FC = () => {
   // V67 FIX: Refs to latest state to solve stale closure in setTimeout(loadFundData)
   const customFundsRef = useRef<string[]>([]);
   customFundsRef.current = customFunds;
+  const fundLoadRequestRef = useRef(0);
 
   // V67: Fund search suggestions (search by name via API)
   const [searchSuggestions, setSearchSuggestions] = useState<FundSearchResult[]>([]);
@@ -3606,6 +3607,7 @@ export const FundRadar: React.FC = () => {
 
   // ---- Load Data ----
   const loadFundData = async (forceRefresh = false) => {
+    const requestId = ++fundLoadRequestRef.current;
     try {
       setLoading(true);
       setLoadError(null);
@@ -3631,18 +3633,24 @@ export const FundRadar: React.FC = () => {
 
       console.log(`[FundRadar] Loading ${allCodes.length} codes (ETF: ${etfCodes.length}, OTC: ${otcCodes.length})`);
 
-      const [etfRealtime, etfHist, fundHist, otcRealtime] = await withFundLoadDeadline(Promise.all([
+      // Critical path: indices and latest quotes only. Historical NAV/K-line
+      // data is deliberately loaded after the first usable fund cards paint;
+      // on a cold cache it is the dominant source of the previous 25-second
+      // blank state.
+      const [etfRealtime, otcRealtime] = await withFundLoadDeadline(Promise.all([
         fetchStockData(etfCodes, forceRefresh),
-        fetchStockHistoryBatch(etfCodes, { forceRefresh }),
-        fetchFundHistoryBatch(otcCodes, { forceRefresh }),
         fetchFunds(otcCodes, forceRefresh),
-      ]));
+      ]), 20_000);
+      if (requestId !== fundLoadRequestRef.current) return;
 
-      const mergedFunds: ExtendedFund[] = [];
-      const historyMap = { ...etfHist, ...fundHist };
       const safeNumber = (val: any) => { if (typeof val === "number") return val; if (typeof val === "string") { const p = parseFloat(val); return isNaN(p) ? undefined : p; } return undefined; };
 
-      const buildFund = (code: string, rt: any, isEtf: boolean): ExtendedFund | null => {
+      const buildFund = (
+        code: string,
+        rt: any,
+        isEtf: boolean,
+        historyMap: Record<string, any[]> = {},
+      ): ExtendedFund | null => {
         if (!rt) return null;
         const hist = historyMap[code] || [];
         const currentPrice = rt.estimateNetValue || rt.current || rt.currentPrice || 0;
@@ -3693,49 +3701,81 @@ export const FundRadar: React.FC = () => {
         } as ExtendedFund;
       };
 
-      etfCodes.forEach(code => { const f = buildFund(code, etfRealtime.data[code], true); if (f) mergedFunds.push(f); });
-      otcRealtime.forEach((rt: any) => { const f = buildFund(rt.code, rt, false); if (f) mergedFunds.push(f); });
-
       const activeThemes = marketThemes.filter(t => t.strength > 60).map(t => t.name);
-      const finalFunds = mergedFunds.map(f => {
-        const benchmark = resolveFundBenchmark(f.category, resolvedIndices);
-        const context: MarketContext = {
-          marketChange: benchmark?.changePercent || 0,
-          benchmarkAvailable: Boolean(benchmark),
-          csi300Change: resolvedIndices.find(index => index.code === "sh000300")?.changePercent || 0,
-          marketYtd: 0,
-          marketVolatility: 0,
-          trend: (benchmark?.changePercent || 0) > 0.5 ? "Bull" : (benchmark?.changePercent || 0) < -0.5 ? "Bear" : "Choppy",
-          sectorPerformance: {},
-        };
-        const withBenchmark = { ...f, benchmarkName: benchmark?.name };
-        const score = calculatePredatorScore(withBenchmark, context, activeThemes);
-        const { signal, guidance } = generatePredatorStrategy(withBenchmark, score);
-        return { ...withBenchmark, score, signal, guidance };
-      });
+      const scoreFunds = (historyMap: Record<string, any[]> = {}) => {
+        const mergedFunds: ExtendedFund[] = [];
+        etfCodes.forEach(code => {
+          const f = buildFund(code, etfRealtime.data?.[code], true, historyMap);
+          if (f) mergedFunds.push(f);
+        });
+        otcRealtime.forEach((rt: any) => {
+          const f = buildFund(rt.code, rt, false, historyMap);
+          if (f) mergedFunds.push(f);
+        });
 
-      if (finalFunds.length === 0) {
+        return mergedFunds.map(f => {
+          const benchmark = resolveFundBenchmark(f.category, resolvedIndices);
+          const context: MarketContext = {
+            marketChange: benchmark?.changePercent || 0,
+            benchmarkAvailable: Boolean(benchmark),
+            csi300Change: resolvedIndices.find(index => index.code === "sh000300")?.changePercent || 0,
+            marketYtd: 0,
+            marketVolatility: 0,
+            trend: (benchmark?.changePercent || 0) > 0.5 ? "Bull" : (benchmark?.changePercent || 0) < -0.5 ? "Bear" : "Choppy",
+            sectorPerformance: {},
+          };
+          const withBenchmark = { ...f, benchmarkName: benchmark?.name };
+          const score = calculatePredatorScore(withBenchmark, context, activeThemes);
+          const { signal, guidance } = generatePredatorStrategy(withBenchmark, score);
+          return { ...withBenchmark, score, signal, guidance };
+        }).sort((a, b) => b.score - a.score);
+      };
+
+      const applyFunds = (nextFunds: ExtendedFund[]) => {
+        if (requestId !== fundLoadRequestRef.current || nextFunds.length === 0) return;
+        const refreshLabel = new Date().toLocaleTimeString();
+        const cachedIndices = resolvedIndices.length > 0
+          ? resolvedIndices
+          : fundPageSessionCache?.indices || indices;
+        setFunds(nextFunds);
+        setLastRefresh(refreshLabel);
+        setLoadError(null);
+        fundPageSessionCache = {
+          funds: nextFunds,
+          indices: cachedIndices,
+          lastRefresh: refreshLabel,
+        };
+      };
+
+      const initialFunds = scoreFunds();
+      if (initialFunds.length === 0) {
         throw new Error("未取得可用基金数据");
       }
-      const sortedFunds = finalFunds.sort((a, b) => b.score - a.score);
-      const refreshLabel = new Date().toLocaleTimeString();
-      const cachedIndices = resolvedIndices.length > 0
-        ? resolvedIndices
-        : fundPageSessionCache?.indices || indices;
-      setFunds(sortedFunds);
-      setLastRefresh(refreshLabel);
-      fundPageSessionCache = {
-        funds: sortedFunds,
-        indices: cachedIndices,
-        lastRefresh: refreshLabel,
-      };
+      // Paint a quote-backed view as soon as the critical path is ready.
+      applyFunds(initialFunds);
+      setLoading(false);
+
+      // Non-blocking enrichment: history powers indicators, trend charts and
+      // rolling evidence. It can update the same cards in place when ready.
+      void Promise.all([
+        fetchStockHistoryBatch(etfCodes, { forceRefresh }),
+        fetchFundHistoryBatch(otcCodes, { forceRefresh }),
+      ]).then(([etfHist, fundHist]) => {
+        if (requestId !== fundLoadRequestRef.current) return;
+        const enrichedFunds = scoreFunds({ ...etfHist, ...fundHist });
+        applyFunds(enrichedFunds);
+      }).catch(error => {
+        if (requestId === fundLoadRequestRef.current) {
+          console.warn("[FundRadar] Historical enrichment failed", error);
+        }
+      });
     } catch (e) {
       console.error("Fund loading failed", e);
       const message = e instanceof Error ? e.message : "基金服务暂时不可用";
       setLoadError(message);
       toast.error(funds.length > 0 ? "基金刷新失败，继续显示上次数据" : "基金数据加载失败");
     } finally {
-      setLoading(false);
+      if (requestId === fundLoadRequestRef.current) setLoading(false);
     }
   };
 

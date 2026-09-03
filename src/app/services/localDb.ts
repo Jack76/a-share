@@ -32,7 +32,10 @@ export const FUND_SNAPSHOT_TTL_MS = 2 * 60 * 1000;
 // Intraday snapshots remain short-lived, while the verified closing snapshot
 // can be reused after the bell. This avoids repeatedly cold-scanning 5,800+
 // symbols and losing direct large-order fields on every closed-market reload.
-const MARKET_TTL_LIVE = 10 * 1000;
+// A verified breadth snapshot is already timestamped by the upstream source.
+// Reusing it for up to a minute avoids a cold full-market scan on every reload
+// while keeping the live dashboard within one polling interval of fresh data.
+const MARKET_TTL_LIVE = 60 * 1000;
 const MARKET_TTL_CLOSED = 12 * 60 * 60 * 1000;
 
 const isChinaMarketSession = (date = new Date()) => {

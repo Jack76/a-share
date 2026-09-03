@@ -24,7 +24,11 @@ const stockDataCache = new Map<string, { data: any, timestamp: number }>();
 const CACHE_TTL = 3000; // 3 seconds cache for live data
 const STALE_STOCK_TTL = 15 * 60_000;
 const lastGoodStockData = new Map<string, { data: Partial<Stock>; timestamp: number }>();
-const MARKET_STATS_CACHE_TTL = 5000;
+// Breadth is intentionally refreshed less often than individual quotes. The
+// server keeps the expensive full-market snapshot warm for the same interval,
+// so a 30-second polling cycle normally hits memory/edge cache instead of
+// starting another paginated scan.
+const MARKET_STATS_CACHE_TTL = 60_000;
 
 // In-flight request deduplication
 const inFlightRequests = new Map<string, Promise<any>>();
@@ -726,12 +730,15 @@ export const fetchMarketStats = async (includeList = false): Promise<MarketStats
 
   if (inFlightRequests.has(cacheKey)) return inFlightRequests.get(cacheKey);
 
-  if (includeList) {
-    const cached = await getLocalMarketSnapshot();
-    if (cached?.list?.length > 4000 && cached.totalAmount !== undefined) {
-      marketStatsCache.set(cacheKey, { data: cached, timestamp: now });
-      return cached;
-    }
+  // The full snapshot is persisted in IndexedDB. Reuse it for both the
+  // compact breadth summary and the scanner list while it is still inside the
+  // local freshness window. This makes a reload paint immediately instead of
+  // waiting for the first cold paginated request.
+  const cached = await getLocalMarketSnapshot();
+  if (cached?.list?.length > 4000 && cached.totalAmount !== undefined) {
+    const localResult = includeList ? cached : { ...cached, list: undefined };
+    marketStatsCache.set(cacheKey, { data: localResult, timestamp: now });
+    return localResult;
   }
 
   const url = `/api/market/stats${includeList ? '?includeList=true' : ''}`;
