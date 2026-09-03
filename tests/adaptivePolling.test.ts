@@ -25,6 +25,8 @@ test('history hydration drains pending batches without a permanent polling loop'
   assert.match(storeSource, /inspectLocalHistoryBatch\(codes\)/);
   assert.match(storeSource, /scheduleNextBatch\(\)/);
   assert.match(storeSource, /historyUniverseKey/);
+  assert.match(storeSource, /!hasHistory && retryAt <= now/);
+  assert.match(storeSource, /STOCK_HISTORY_BACKGROUND_BARS/);
   assert.doesNotMatch(storeSource, /setInterval\(fetchMissingHistory/);
 });
 

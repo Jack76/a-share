@@ -237,11 +237,33 @@ export const fetchIntradayBatch = async (
   }
 };
 
+const mergeHistorySeries = (
+  existing: StockHistoryPoint[] | undefined,
+  incoming: StockHistoryPoint[] | undefined,
+  maxBars: number,
+) => {
+  const byDay = new Map<string, StockHistoryPoint>();
+  [...(existing || []), ...(incoming || [])].forEach(point => {
+    if (point?.day) byDay.set(point.day, point);
+  });
+  return [...byDay.values()]
+    .sort((a, b) => a.day.localeCompare(b.day))
+    .slice(-Math.max(maxBars, existing?.length || 0));
+};
+
 export const fetchStockHistoryBatch = async (
   codes: string[],
-  options: { forceRefresh?: boolean } = {},
+  options: { forceRefresh?: boolean; requestedBars?: number } = {},
 ): Promise<Record<string, StockHistoryPoint[]>> => {
   if (codes.length === 0) return {};
+
+  // Keep background/list hydration bounded while allowing detail and manual
+  // refresh flows to request the full window. The worker clamps this value as
+  // well, so malformed callers cannot turn a request into an unbounded query.
+  const requestedBarsInput = Number(options.requestedBars ?? STOCK_HISTORY_REQUESTED_BARS);
+  const requestedBars = Number.isFinite(requestedBarsInput)
+    ? Math.min(STOCK_HISTORY_REQUESTED_BARS, Math.max(30, Math.round(requestedBarsInput)))
+    : STOCK_HISTORY_REQUESTED_BARS;
 
   // 0. Inspect IndexedDB without discarding expired entries. Stale data remains
   // a usable fallback while the network refresh runs.
@@ -262,7 +284,7 @@ export const fetchStockHistoryBatch = async (
         cachedAt: entry.cachedAt,
         requestedBars: entry.requestedBars,
         upgradeAttemptedAt: entry.upgradeAttemptedAt,
-      }, now);
+      }, now, requestedBars);
 
       if (assessment.canRender) validLocalData[code] = entry.data;
       if (options.forceRefresh || assessment.shouldRefresh) refreshCodes.push(code);
@@ -293,7 +315,7 @@ export const fetchStockHistoryBatch = async (
 
   // Persist the attempt independently from success. A temporary upstream
   // failure must not restart a full legacy-cache upgrade on every page load.
-  if (upgradeCodes.length > 0) {
+  if (upgradeCodes.length > 0 && requestedBars >= STOCK_HISTORY_REQUESTED_BARS) {
     await markLocalHistoryUpgradeAttempt(upgradeCodes, now);
   }
   
@@ -305,7 +327,7 @@ export const fetchStockHistoryBatch = async (
     await Promise.all(wave.map(async (batchCodes) => {
         const list = batchCodes.join(',');
         // Request stock history data (default from backend)
-        const url = `/api/market/history?codes=${list}`;
+        const url = `/api/market/history?codes=${list}&bars=${requestedBars}`;
 
         try {
             // 3. Timeout 90s (Increased from 60s for stability)
@@ -339,15 +361,26 @@ export const fetchStockHistoryBatch = async (
     }
   }
 
+  // Preserve a previously cached long window when a compact background refresh
+  // returns fewer bars. This keeps stale-but-useful older bars available for a
+  // later detail/replay request instead of silently shrinking the cache.
+  const resolvedApiResults: Record<string, StockHistoryPoint[]> = {};
+  Object.entries(apiResults).forEach(([code, data]) => {
+    resolvedApiResults[code] = mergeHistorySeries(entries[code]?.data, data, requestedBars);
+  });
+
   // 3. Save new data to IndexedDB
-  if (Object.keys(apiResults).length > 0) {
-      await setLocalHistoryBatch(apiResults, {
-        requestedBars: STOCK_HISTORY_REQUESTED_BARS,
-        upgradeAttemptedAt: now,
+  if (Object.keys(resolvedApiResults).length > 0) {
+      await setLocalHistoryBatch(resolvedApiResults, {
+        requestedBars,
+        // A compact list request is not an attempted full-history upgrade. Do
+        // not make a later detail request wait for the seven-day upgrade retry
+        // window just because the background request completed.
+        ...(requestedBars >= STOCK_HISTORY_REQUESTED_BARS ? { upgradeAttemptedAt: now } : {}),
       });
   }
   
-  return { ...validLocalData, ...apiResults };
+  return { ...validLocalData, ...resolvedApiResults };
 };
 
 // V8.0 Fetch Fund Historical NAV Data (Batch Support)

@@ -1,5 +1,9 @@
 export const STOCK_HISTORY_REQUESTED_BARS = 640;
 export const STOCK_HISTORY_PREFERRED_BARS = 600;
+// The list view only needs enough daily bars to calculate trend indicators and
+// render a sparkline. Full history is fetched on demand for detail/review
+// flows, which keeps the initial browser payload bounded.
+export const STOCK_HISTORY_BACKGROUND_BARS = 240;
 export const FUND_HISTORY_REQUESTED_BARS = 365;
 export const FUND_HISTORY_PREFERRED_BARS = 30;
 export const STOCK_HISTORY_CACHE_TTL_MS = 20 * 60 * 60 * 1000;
@@ -38,7 +42,7 @@ const assessHistoryCache = (
     latestDay >= freshnessThreshold;
 
   // A short history can be legitimate for a newly listed stock. Once the
-  // backend has already been asked for its full 640-bar window, its shorter
+  // backend has already been asked for the requested window, its shorter
   // response is considered complete instead of being upgraded on every load.
   const fullWindowAlreadyRequested =
     (metadata?.requestedBars || 0) >= requestedBars;
@@ -61,11 +65,12 @@ export const assessStockHistoryCache = (
   history: any[] | undefined,
   metadata: StockHistoryCacheMetadata | undefined,
   now = Date.now(),
+  requestedBars = STOCK_HISTORY_REQUESTED_BARS,
 ) => assessHistoryCache(
   history,
   metadata,
-  STOCK_HISTORY_REQUESTED_BARS,
-  STOCK_HISTORY_PREFERRED_BARS,
+  requestedBars,
+  Math.min(STOCK_HISTORY_PREFERRED_BARS, requestedBars),
   now,
 );
 

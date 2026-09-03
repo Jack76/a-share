@@ -6,6 +6,7 @@ import { Button } from '../ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Badge } from '../ui/badge';
+import { Progress } from '../ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '../ui/dialog';
 import { Trash2, Plus, SquarePen, RefreshCw, Search, Sparkles, ArrowUpDown, ArrowUp, ArrowDown, Stethoscope, Zap, TriangleAlert, Rocket, Waves, Filter, X, Star, LayoutList, AlignJustify } from 'lucide-react';
 import { toast } from 'sonner';
@@ -32,7 +33,7 @@ import { sanitizeAdvisoryLanguage } from '../../utils/advisoryLanguage';
 // V65.0: analyzeIntradayStructure now runs in Store pipeline, DragonPool reads pre-computed stock.intradayIndicators
 
 export const DragonPool: React.FC = () => {
-  const { stocks, addStock, addStocks, updateStock, updateStocks, removeStock, refreshData, isMarketOpen, phase, forceRefreshHistory, analyzeLiveStockSignal } = useTrading();
+  const { stocks, addStock, addStocks, updateStock, updateStocks, removeStock, refreshData, isMarketOpen, phase, forceRefreshHistory, historyLoadProgress, analyzeLiveStockSignal } = useTrading();
   const processedRef = useRef<Set<string>>(new Set());
   const velocityTracker = useRef<Map<string, {
     price: number;
@@ -919,6 +920,41 @@ export const DragonPool: React.FC = () => {
            </div>
         </div>
       </div>
+
+      {historyLoadProgress.total > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <div className="flex items-center gap-2 text-[10px] font-black tracking-wide text-slate-700">
+              <Activity className="h-3.5 w-3.5 text-red-500" />
+              历史趋势 {historyLoadProgress.loaded}/{historyLoadProgress.total}
+            </div>
+            <span className="text-[10px] font-bold text-slate-500">
+              {historyLoadProgress.failed > 0
+                ? `${historyLoadProgress.failed} 条请求失败，正在自动重试`
+                : historyLoadProgress.pending > 0
+                  ? '后台补全中，列表先加载近 240 个交易日'
+                  : '历史数据已全部就绪'}
+            </span>
+            {(historyLoadProgress.failed > 0 || historyLoadProgress.pending > 0) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={forceRefreshHistory}
+                className="ml-auto h-7 rounded-lg px-2 text-[10px] font-black text-red-600 hover:bg-red-50 hover:text-red-700"
+              >
+                <RefreshCw className="mr-1.5 h-3 w-3" />
+                重试缺失
+              </Button>
+            )}
+          </div>
+          <Progress
+            value={historyLoadProgress.percent}
+            aria-label={`历史趋势已加载 ${historyLoadProgress.percent}%`}
+            className="mt-2 h-1.5 bg-slate-200"
+            indicatorClassName="bg-red-500"
+          />
+        </div>
+      )}
       
       {/* Search & Filters Bar */}
       <div className="flex flex-col gap-4">

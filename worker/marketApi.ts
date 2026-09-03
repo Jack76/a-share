@@ -936,11 +936,18 @@ const handleFunds = async (request: Request, url: URL) => {
 
 const toHistorySymbol = (code: string) => normalizeCode(code);
 
-const fetchStockHistoryOne = async (raw: string, period?: string) => {
+const clampHistoryBars = (value: string | null | undefined, fallback = 640) => {
+  if (value == null || value.trim() === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(640, Math.max(30, Math.floor(parsed)));
+};
+
+const fetchStockHistoryOne = async (raw: string, period?: string, requestedBars = 640) => {
   const symbol = toHistorySymbol(raw);
   const intraday = ['1', '5', '15', '30'].includes(period || '');
   const scale = intraday ? Number(period) : 240;
-  const length = intraday ? (scale === 1 ? 240 : scale === 5 ? 120 : scale === 15 ? 80 : 60) : 640;
+  const length = intraday ? (scale === 1 ? 240 : scale === 5 ? 120 : scale === 15 ? 80 : 60) : requestedBars;
   if (intraday) {
     const key = scale === 1 ? 'm1' : scale === 5 ? 'm5' : scale === 15 ? 'm15' : 'm30';
     try {
@@ -996,17 +1003,18 @@ const handleHistory = async (request: Request, url: URL) => {
   const code = url.searchParams.get('code');
   const codes = (url.searchParams.get('codes') || '').split(',').filter(Boolean);
   const period = url.searchParams.get('period') || undefined;
+  const requestedBars = clampHistoryBars(url.searchParams.get('bars'));
   if (codes.length > 0) {
     const results: Record<string, any[]> = {};
     for (let index = 0; index < Math.min(codes.length, 20); index += 5) {
       if (requestAborted(request)) return noContent();
       const batch = codes.slice(index, index + 5);
-      const values = await Promise.all(batch.map(item => fetchStockHistoryOne(item, period)));
+      const values = await Promise.all(batch.map(item => fetchStockHistoryOne(item, period, requestedBars)));
       batch.forEach((item, batchIndex) => { results[item] = values[batchIndex] || []; });
     }
     return requestAborted(request) ? noContent() : json({ data: results });
   }
-  if (code) return json({ data: await fetchStockHistoryOne(code, period) });
+  if (code) return json({ data: await fetchStockHistoryOne(code, period, requestedBars) });
   return json({ error: 'Code or codes required' }, 400);
 };
 

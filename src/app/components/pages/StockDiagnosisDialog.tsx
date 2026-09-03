@@ -9,7 +9,8 @@ import { TimeSharingDivergence } from '../TimeSharingDivergence';
 import { ChipsDistribution } from '../ChipsDistribution';
 import { cn } from '../ui/utils';
 import { calculateRealtimeMetrics, RealtimeMetrics } from '../../utils/realtimeAnalysis';
-import { fetchStockTicks, fetchStockData } from '../../services/marketData';
+import { fetchStockTicks, fetchStockData, fetchStockHistoryBatch } from '../../services/marketData';
+import { STOCK_HISTORY_REQUESTED_BARS } from '../../services/historyCachePolicy';
 import { detectFundIdentity, predictSmashRisk } from '../../utils/fundIntelligence';
 import { calculateOvernightPotential, calculateLimitUpStrength } from '../../utils/scoring';
 import {
@@ -48,11 +49,39 @@ export const StockDiagnosisDialog: React.FC<StockDiagnosisDialogProps> = ({ isOp
 
   React.useEffect(() => {
       if (initialStock) {
-          setStock(prev => initialStock);
+          // Keep a full history fetched by the detail view when the pool emits
+          // a newer quote snapshot that still carries only the compact window.
+          setStock(prev => {
+            const previousBars = prev?.history?.length || 0;
+            const incomingBars = initialStock.history?.length || 0;
+            return previousBars > incomingBars
+              ? { ...initialStock, history: prev?.history }
+              : initialStock;
+          });
           // V49.7: Reset to Snapshot, not null
           setLocalMetrics(calculateRealtimeMetrics(initialStock, []));
       }
   }, [initialStock]);
+
+  // The pool hydrates a compact 240-day window first. A detail view is the
+  // intentional place to spend the extra bandwidth for the full history used
+  // by evidence, replay and long-range trend charts.
+  React.useEffect(() => {
+    if (!isOpen || !initialStock?.code || (initialStock.history?.length || 0) >= 600) return;
+    let isMounted = true;
+    void fetchStockHistoryBatch([initialStock.code], {
+      requestedBars: STOCK_HISTORY_REQUESTED_BARS,
+    }).then(historyMap => {
+      const history = historyMap[initialStock.code];
+      if (!isMounted || !history?.length) return;
+      setStock(prev => prev ? { ...prev, history } : prev);
+    }).catch(error => {
+      console.warn('Detail history fetch failed', error);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [initialStock?.code, isOpen]);
 
   // Single-flight polling: a slow request must finish before the next one starts.
   React.useEffect(() => {

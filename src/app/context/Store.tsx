@@ -57,6 +57,7 @@ import { getChinaTradingClock } from '../utils/marketClock';
 import { syncPredictionLedger } from '../utils/predictionLedger';
 import { sanitizeAdvisoryLanguage } from '../utils/advisoryLanguage';
 import { buildAShareFactorProfiles } from '../utils/aShareFactors';
+import { STOCK_HISTORY_BACKGROUND_BARS } from '../services/historyCachePolicy';
 
 interface TradingState {
   stocks?: Stock[];
@@ -95,6 +96,15 @@ interface JournalEntry {
   strategy: string;
 }
 
+export interface HistoryLoadProgress {
+  total: number;
+  loaded: number;
+  pending: number;
+  failed: number;
+  percent: number;
+  isLoading: boolean;
+}
+
 interface TradingContextType {
   metrics: DailyMetrics;
   setMetrics: (metrics: DailyMetrics) => void;
@@ -125,6 +135,7 @@ interface TradingContextType {
   lastMarketRefreshAt: number | null;
   marketRefreshError: string | null;
   forceRefreshHistory: () => void;
+  historyLoadProgress: HistoryLoadProgress;
   eventDrivenMode: EventDrivenDetection | null; // V64.0
   analyzeLiveStockSignal: (
     stock: Stock,
@@ -235,6 +246,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [marketRefreshError, setMarketRefreshError] = useState<string | null>(null);
   const [eventDrivenMode, setEventDrivenMode] = useState<EventDrivenDetection | null>(null); // V64.0
   const [historyLoadRevision, setHistoryLoadRevision] = useState(0);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
 
   const stocksRef = useRef(stocks);
   const themesRef = useRef(themes);
@@ -1057,7 +1069,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
               role: 'Observer',
               status: 'Watch',
               tags: ['Auto-Discovered'],
-              history: [] // No history initially, will be fetched if needed
+              // Keep the unattempted state distinct from a failed request. The
+              // history hydrator uses this distinction to retry empty results.
+              history: undefined
           } as Stock));
 
           if (newHighFlyers.length > 0) {
@@ -1569,6 +1583,21 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setHistoryLoadRevision(revision => revision + 1);
   };
 
+  const historyLoadProgress = useMemo<HistoryLoadProgress>(() => {
+    const total = stocks.length;
+    const loaded = stocks.filter(stock => Array.isArray(stock.history) && stock.history.length > 0).length;
+    const failed = stocks.filter(stock => Array.isArray(stock.history) && stock.history.length === 0).length;
+    const pending = Math.max(0, total - loaded - failed);
+    return {
+      total,
+      loaded,
+      pending,
+      failed,
+      percent: total > 0 ? Math.round((loaded / total) * 100) : 100,
+      isLoading: isHistoryLoading,
+    };
+  }, [isHistoryLoading, stocks]);
+
   // History Fetching Logic (Centralized)
   // The stock-code key changes only when the pool membership changes. History
   // updates therefore do not restart this loader or create a render loop.
@@ -1580,7 +1609,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     let cancelled = false;
     let nextBatchTimer: number | undefined;
-    const attemptedCodes = new Set<string>();
+    const retryAtByCode = new Map<string, number>();
+    const retryCountByCode = new Map<string, number>();
+    const retryDelaysMs = [5_000, 20_000, 60_000, 5 * 60_000, 15 * 60_000];
 
     const historySignature = (history: Stock['history']) => {
       if (!history?.length) return '';
@@ -1597,33 +1628,63 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }, delayMs);
     };
 
+    const markHistoryFailure = (code: string) => {
+      const nextAttempt = (retryCountByCode.get(code) || 0) + 1;
+      retryCountByCode.set(code, nextAttempt);
+      const delay = retryDelaysMs[Math.min(nextAttempt - 1, retryDelaysMs.length - 1)];
+      retryAtByCode.set(code, Date.now() + delay);
+    };
+
     const fetchMissingHistory = async () => {
       if (cancelled) return;
-      if (document.hidden) return;
+      if (document.hidden) {
+        setIsHistoryLoading(false);
+        return;
+      }
       const currentStocks = stocksRef.current;
-      if (currentStocks.length === 0) return;
+      if (currentStocks.length === 0) {
+        setIsHistoryLoading(false);
+        return;
+      }
       if (isFetchingHistoryRef.current) {
         scheduleNextBatch(500);
         return;
       }
 
+      const now = Date.now();
       const missingHistory = currentStocks
-        .filter(stock => stock.history === undefined && !attemptedCodes.has(stock.code))
+        .filter(stock => {
+          const hasHistory = Array.isArray(stock.history) && stock.history.length > 0;
+          const retryAt = retryAtByCode.get(stock.code) || 0;
+          return !hasHistory && retryAt <= now;
+        })
         .sort((a, b) => {
           const priority = (stock: Stock) =>
             (stock.status === 'Hold' ? 4 : 0) +
             (stock.tags?.includes('SelfSelect') ? 2 : 0) +
-            (stock.role === 'Leader' ? 1 : 0);
+            (stock.role === 'Leader' ? 1 : 0) +
+            (stock.history === undefined ? 1 : 0);
           return priority(b) - priority(a);
         });
-      if (missingHistory.length === 0) return;
+      if (missingHistory.length === 0) {
+        const nextRetryAt = currentStocks.reduce((soonest, stock) => {
+          if (Array.isArray(stock.history) && stock.history.length > 0) return soonest;
+          const retryAt = retryAtByCode.get(stock.code) || 0;
+          return retryAt > now ? Math.min(soonest, retryAt) : soonest;
+        }, Number.POSITIVE_INFINITY);
+        if (Number.isFinite(nextRetryAt)) {
+          scheduleNextBatch(Math.max(750, nextRetryAt - now));
+        }
+        setIsHistoryLoading(false);
+        return;
+      }
 
       isFetchingHistoryRef.current = true;
+      setIsHistoryLoading(true);
       
       const batchSize = 15;
       const batch = missingHistory.slice(0, batchSize);
       const codes = batch.map(s => s.code);
-      codes.forEach(code => attemptedCodes.add(code));
 
       try {
           // Stale-while-revalidate: show any local series immediately instead
@@ -1638,7 +1699,9 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           });
           if (cachedUpdates.length > 0) updateStocks(cachedUpdates);
 
-          const refreshedMap = await fetchStockHistoryBatch(codes);
+          const refreshedMap = await fetchStockHistoryBatch(codes, {
+            requestedBars: STOCK_HISTORY_BACKGROUND_BARS,
+          });
           if (cancelled) return;
           const refreshedUpdates: { id: string; changes: Partial<Stock> }[] = [];
 
@@ -1647,12 +1710,16 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
               if (!stock) return;
               const refreshed = refreshedMap[code];
               const cached = cachedEntries[code]?.data;
+              const resolved = refreshed?.length ? refreshed : cached;
 
-              if (refreshed?.length) {
-                if (historySignature(refreshed) !== historySignature(cached)) {
-                  refreshedUpdates.push({ id: stock.id, changes: { history: refreshed } });
+              if (resolved?.length) {
+                retryAtByCode.delete(code);
+                retryCountByCode.delete(code);
+                if (historySignature(resolved) !== historySignature(stock.history)) {
+                  refreshedUpdates.push({ id: stock.id, changes: { history: resolved } });
                 }
-              } else if (!cached?.length) {
+              } else {
+                markHistoryFailure(code);
                 refreshedUpdates.push({ id: stock.id, changes: { history: [] } });
               }
           });
@@ -1660,8 +1727,16 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (refreshedUpdates.length > 0) updateStocks(refreshedUpdates);
       } catch (err) {
           console.error("History batch error", err);
+          if (!cancelled) {
+            codes.forEach(markHistoryFailure);
+            updateStocks(codes.flatMap(code => {
+              const stock = stocksRef.current.find(item => item.code === code);
+              return stock ? [{ id: stock.id, changes: { history: [] } }] : [];
+            }));
+          }
       } finally {
           isFetchingHistoryRef.current = false;
+          setIsHistoryLoading(false);
           if (!cancelled) scheduleNextBatch();
       }
     };
@@ -1677,6 +1752,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     
     return () => {
       cancelled = true;
+      setIsHistoryLoading(false);
       if (nextBatchTimer !== undefined) window.clearTimeout(nextBatchTimer);
       document.removeEventListener('visibilitychange', resumeWhenVisible);
     };
@@ -1689,12 +1765,12 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     addTheme, removeTheme, stocks, addStock, addStocks, updateStock, updateStocks, removeStock,
     journal, setJournal: updateJournal, journalHistory, marketIndices, marketStats, marketThemes, indexTechnicals, refreshData, isMarketOpen, localSaveStatus,
     marketRefreshStatus, lastMarketRefreshAt, marketRefreshError,
-    forceRefreshHistory, eventDrivenMode, analyzeLiveStockSignal
+    forceRefreshHistory, historyLoadProgress, eventDrivenMode, analyzeLiveStockSignal
   }), [
     metrics, sentimentHistory, phase, phaseHistory, marketEvents, themes, stocks,
     journal, journalHistory, marketIndices, marketStats, marketThemes, indexTechnicals, isMarketOpen, localSaveStatus,
     marketRefreshStatus, lastMarketRefreshAt, marketRefreshError, eventDrivenMode,
-    analyzeLiveStockSignal, updateJournal
+    historyLoadProgress, analyzeLiveStockSignal, updateJournal
   ]);
 
   return (
@@ -1739,6 +1815,14 @@ export const useTrading = () => {
       lastMarketRefreshAt: null,
       marketRefreshError: null,
       forceRefreshHistory: () => {},
+      historyLoadProgress: {
+        total: 0,
+        loaded: 0,
+        pending: 0,
+        failed: 0,
+        percent: 100,
+        isLoading: false,
+      },
       eventDrivenMode: null,
       analyzeLiveStockSignal: (stock: Stock) => analyzeStockSignal(stock, 'Chaos'),
     } as TradingContextType;

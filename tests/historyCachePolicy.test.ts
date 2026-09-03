@@ -4,6 +4,7 @@ import {
   assessFundHistoryCache,
   assessStockHistoryCache,
   FUND_HISTORY_REQUESTED_BARS,
+  STOCK_HISTORY_BACKGROUND_BARS,
   STOCK_HISTORY_CACHE_TTL_MS,
   STOCK_HISTORY_REQUESTED_BARS,
   STOCK_HISTORY_UPGRADE_RETRY_MS,
@@ -37,6 +38,18 @@ test('a legacy 300-bar cache is upgraded once', () => {
 
   assert.equal(result.shouldUpgrade, true);
   assert.equal(result.shouldRefresh, true);
+});
+
+test('the compact background window is treated as complete for list hydration', () => {
+  const result = assessStockHistoryCache(history(STOCK_HISTORY_BACKGROUND_BARS), {
+    cachedAt: NOW - 60_000,
+    requestedBars: STOCK_HISTORY_BACKGROUND_BARS,
+    upgradeAttemptedAt: NOW - 60_000,
+  }, NOW, STOCK_HISTORY_BACKGROUND_BARS);
+
+  assert.equal(result.canRender, true);
+  assert.equal(result.shouldUpgrade, false);
+  assert.equal(result.shouldRefresh, false);
 });
 
 test('a failed legacy upgrade is not retried on every page load', () => {
