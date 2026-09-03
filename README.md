@@ -98,6 +98,10 @@ flowchart LR
 - **部署**：OpenAI Sites / Cloudflare Worker-compatible 构建；
 - **测试**：Node 原生测试运行器，覆盖因子、市场规则、历史证据、数据健康、基金策略和本地持久化等模块。
 
+## 开源许可
+
+本项目以 [MIT License](LICENSE) 发布。第三方依赖、行情数据和数据源仍受各自许可证及服务条款约束；本项目仅用于研究与决策辅助，不构成投资建议。
+
 ## 进一步阅读
 
 - [系统总览](docs/archive/SYSTEM_OVERVIEW.md)：页面、数据流与主要模块说明；
