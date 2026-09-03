@@ -4,6 +4,14 @@
 
 ![Dragon Quant 项目预览](public/og.png)
 
+## 宣传视频
+
+<video controls preload="metadata" poster="https://raw.githubusercontent.com/Jack76/a-share/main/public/og.png" width="100%">
+  <source src="https://raw.githubusercontent.com/Jack76/a-share/main/public/dragon-quant-promo.mp4" type="video/mp4">
+</video>
+
+[如果 GitHub 页面未直接显示播放器，点击下载 MP4](public/dragon-quant-promo.mp4)
+
 > 这是研究与决策辅助工具，不是自动下单系统。任何信号、预测、止损和仓位建议都不构成投资建议，也不保证收益。
 
 ## 项目定位

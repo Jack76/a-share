@@ -1,0 +1,935 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Dragon Quant｜短线交易实操框架</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face {
+        font-family: "PingFang SC";
+        src: local("PingFang SC");
+        font-weight: 400 900;
+      }
+
+      @font-face {
+        font-family: "Noto Sans CJK SC";
+        src: local("Noto Sans CJK SC");
+        font-weight: 400 900;
+      }
+
+      :root {
+        --ink: #07111f;
+        --surface: #0d1b2a;
+        --surface-2: #13253a;
+        --fg: #f4f7fa;
+        --muted: #9aaabe;
+        --red: #ff5a52;
+        --red-soft: rgba(229, 57, 47, 0.2);
+        --line: rgba(244, 247, 250, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        margin: 0;
+        overflow: hidden;
+        background: var(--ink);
+        color: var(--fg);
+        font-family: Inter, "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      [data-composition-id="dragon-quant-promo"] {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--ink);
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--ink);
+      }
+
+      .scene-content {
+        position: relative;
+        z-index: 4;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 100%;
+        padding: 128px 156px;
+        gap: 26px;
+      }
+
+      .scene-content.center {
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+
+      .scene-content.split {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 72px;
+      }
+
+      .scene-content.split > .copy {
+        width: 40%;
+        min-width: 0;
+      }
+
+      .scene-content.split > .visual {
+        width: 54%;
+        min-width: 0;
+      }
+
+      .kicker {
+        color: var(--red);
+        font-size: 20px;
+        font-weight: 800;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        max-width: 1240px;
+        font-size: 88px;
+        line-height: 1.04;
+        letter-spacing: -0.055em;
+        font-weight: 850;
+      }
+
+      h2 {
+        max-width: 760px;
+        font-size: 64px;
+        line-height: 1.07;
+        letter-spacing: -0.045em;
+        font-weight: 850;
+      }
+
+      .lede {
+        max-width: 760px;
+        color: var(--muted);
+        font-size: 28px;
+        line-height: 1.5;
+        letter-spacing: 0.01em;
+      }
+
+      .small-note {
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1.45;
+      }
+
+      .accent {
+        color: var(--red);
+      }
+
+      .brand-mark {
+        position: relative;
+        display: inline-flex;
+        align-items: flex-end;
+        gap: 7px;
+        width: 82px;
+        height: 82px;
+        padding: 16px;
+        border: 1px solid rgba(244, 247, 250, 0.24);
+        border-radius: 22px;
+        background: var(--surface);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.24);
+      }
+
+      .brand-mark span {
+        display: block;
+        width: 9px;
+        border-radius: 6px;
+        background: var(--red);
+      }
+
+      .brand-mark span:nth-child(1) { height: 24px; }
+      .brand-mark span:nth-child(2) { height: 40px; opacity: 0.78; }
+      .brand-mark span:nth-child(3) { height: 54px; opacity: 0.58; }
+
+      .rule-line {
+        width: 420px;
+        height: 2px;
+        transform-origin: left center;
+        background: var(--red);
+      }
+
+      .micro-label {
+        color: var(--muted);
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+
+      .decor-grid,
+      .decor-glow,
+      .scan-line,
+      .transition-wipe {
+        pointer-events: none;
+      }
+
+      .decor-grid {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        opacity: 0.28;
+        background-image:
+          linear-gradient(rgba(244, 247, 250, 0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(244, 247, 250, 0.045) 1px, transparent 1px);
+        background-size: 80px 80px;
+        mask-image: linear-gradient(to bottom, black, transparent 82%);
+      }
+
+      .decor-glow {
+        position: absolute;
+        z-index: 0;
+        width: 740px;
+        height: 740px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(229, 57, 47, 0.18) 0%, rgba(229, 57, 47, 0) 68%);
+        filter: blur(2px);
+      }
+
+      .glow-a { top: -270px; right: -140px; }
+      .glow-b { bottom: -390px; left: -170px; opacity: 0.55; }
+
+      .scan-line {
+        position: absolute;
+        top: 0;
+        left: -260px;
+        z-index: 2;
+        width: 180px;
+        height: 100%;
+        transform: skewX(-18deg);
+        opacity: 0.08;
+        background: linear-gradient(90deg, transparent, var(--red), transparent);
+      }
+
+      .step-rail {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-top: 34px;
+      }
+
+      .step-rail .step {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--muted);
+        font-size: 20px;
+        font-weight: 750;
+      }
+
+      .step-rail .dot {
+        width: 12px;
+        height: 12px;
+        border: 2px solid var(--red);
+        border-radius: 50%;
+      }
+
+      .step-rail .connector {
+        width: 68px;
+        height: 1px;
+        background: var(--line);
+      }
+
+      .market-shell,
+      .leader-shell,
+      .diagnosis-shell {
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: rgba(13, 27, 42, 0.88);
+        box-shadow: 0 34px 90px rgba(0, 0, 0, 0.28);
+      }
+
+      .market-shell {
+        position: relative;
+        height: 590px;
+        padding: 34px;
+      }
+
+      .panel-topline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-bottom: 22px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .panel-title {
+        color: var(--fg);
+        font-size: 21px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+      }
+
+      .live-dot {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        color: var(--red);
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: 0.15em;
+      }
+
+      .live-dot::before {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--red);
+        box-shadow: 0 0 0 6px var(--red-soft);
+        content: "";
+      }
+
+      .metric-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        margin-top: 28px;
+      }
+
+      .metric {
+        min-height: 122px;
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(19, 37, 58, 0.7);
+      }
+
+      .metric-value {
+        margin-bottom: 9px;
+        color: var(--fg);
+        font-size: 31px;
+        font-weight: 850;
+        letter-spacing: -0.04em;
+      }
+
+      .metric-label {
+        color: var(--muted);
+        font-size: 18px;
+        font-weight: 650;
+      }
+
+      .trend-chart {
+        position: relative;
+        height: 250px;
+        margin-top: 28px;
+        padding: 24px 18px 18px;
+        overflow: hidden;
+        border-top: 1px solid var(--line);
+      }
+
+      .chart-bars {
+        position: absolute;
+        inset: 52px 18px 18px;
+        display: flex;
+        align-items: flex-end;
+        gap: 14px;
+      }
+
+      .chart-bars span {
+        display: block;
+        flex: 1;
+        min-width: 12px;
+        max-width: 44px;
+        height: var(--h);
+        transform-origin: bottom center;
+        border-radius: 8px 8px 3px 3px;
+        background: rgba(244, 247, 250, 0.24);
+      }
+
+      .chart-bars span:nth-child(3n) { background: rgba(229, 57, 47, 0.72); }
+      .chart-bars span:nth-child(5n) { background: rgba(229, 57, 47, 0.4); }
+
+      .chart-line {
+        position: absolute;
+        left: 22px;
+        right: 18px;
+        top: 80px;
+        height: 94px;
+        border-top: 3px solid var(--red);
+        border-radius: 46% 54% 40% 60%;
+        transform: rotate(-6deg) skewX(-12deg);
+        box-shadow: 0 0 24px rgba(229, 57, 47, 0.35);
+      }
+
+      .chart-line::after {
+        position: absolute;
+        right: 2%;
+        top: -9px;
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        background: var(--red);
+        box-shadow: 0 0 0 8px var(--red-soft);
+        content: "";
+      }
+
+      .leader-shell {
+        height: 650px;
+        padding: 30px;
+      }
+
+      .leader-head {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+        padding-bottom: 22px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .leader-head strong {
+        font-size: 25px;
+        letter-spacing: 0.03em;
+      }
+
+      .leader-head span {
+        color: var(--muted);
+        font-size: 17px;
+      }
+
+      .leader-row {
+        display: grid;
+        grid-template-columns: 1.7fr 1fr 1fr 0.8fr;
+        align-items: center;
+        gap: 18px;
+        min-height: 86px;
+        padding: 16px 18px;
+        border-bottom: 1px solid rgba(244, 247, 250, 0.1);
+      }
+
+      .leader-row:first-of-type { margin-top: 10px; }
+
+      .leader-name {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 22px;
+        font-weight: 800;
+      }
+
+      .leader-name::before {
+        width: 9px;
+        height: 34px;
+        border-radius: 6px;
+        background: var(--red);
+        content: "";
+      }
+
+      .leader-code,
+      .leader-cell {
+        color: var(--muted);
+        font-size: 18px;
+        font-weight: 650;
+      }
+
+      .leader-cell strong {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--fg);
+        font-size: 21px;
+      }
+
+      .tag {
+        justify-self: start;
+        padding: 8px 12px;
+        border: 1px solid rgba(229, 57, 47, 0.42);
+        border-radius: 999px;
+        color: #ff9e98;
+        font-size: 15px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .signal-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+
+      .signal-chip {
+        padding: 11px 14px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        color: var(--muted);
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .diagnosis-shell {
+        display: grid;
+        grid-template-columns: 1.1fr 1fr;
+        gap: 24px;
+        padding: 30px;
+      }
+
+      .diagnosis-panel {
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: rgba(19, 37, 58, 0.75);
+      }
+
+      .diagnosis-panel h3 {
+        margin: 0 0 20px;
+        color: var(--muted);
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .diagnosis-panel .stock-title {
+        margin-bottom: 24px;
+        font-size: 32px;
+        font-weight: 850;
+      }
+
+      .decision-card {
+        min-height: 128px;
+        margin-top: 14px;
+        padding: 20px;
+        border-left: 4px solid var(--red);
+        border-radius: 0 16px 16px 0;
+        background: rgba(7, 17, 31, 0.78);
+      }
+
+      .decision-card .decision-label {
+        margin-bottom: 10px;
+        color: var(--red);
+        font-size: 17px;
+        font-weight: 850;
+        letter-spacing: 0.15em;
+      }
+
+      .decision-card .decision-text {
+        color: var(--fg);
+        font-size: 24px;
+        font-weight: 750;
+        line-height: 1.3;
+      }
+
+      .evidence-list {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        margin-top: 24px;
+      }
+
+      .evidence-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 18px;
+        padding: 15px 0;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 19px;
+        font-weight: 650;
+      }
+
+      .evidence-row strong {
+        color: var(--fg);
+        font-size: 19px;
+      }
+
+      .reliability {
+        margin-top: 24px;
+        padding: 18px;
+        border: 1px solid rgba(229, 57, 47, 0.32);
+        border-radius: 16px;
+        background: rgba(229, 57, 47, 0.08);
+      }
+
+      .reliability strong {
+        display: block;
+        margin-bottom: 6px;
+        color: #ffb0aa;
+        font-size: 19px;
+      }
+
+      .reliability span {
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.4;
+      }
+
+      .final-mark {
+        transform: scale(1.22);
+      }
+
+      .final-title {
+        max-width: 980px;
+        margin-top: 32px;
+        font-size: 76px;
+      }
+
+      .final-subtitle {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 28px;
+      }
+
+      .url-pill {
+        margin-top: 38px;
+        padding: 16px 26px;
+        border: 1px solid rgba(229, 57, 47, 0.5);
+        border-radius: 999px;
+        color: var(--fg);
+        background: rgba(229, 57, 47, 0.1);
+        font-size: 22px;
+        font-weight: 750;
+        letter-spacing: 0.02em;
+      }
+
+      .risk-note {
+        position: absolute;
+        bottom: 54px;
+        left: 0;
+        right: 0;
+        color: rgba(154, 170, 190, 0.75);
+        font-size: 16px;
+        text-align: center;
+      }
+
+      .transition-wipe {
+        position: absolute;
+        top: -12%;
+        bottom: -12%;
+        left: -115%;
+        z-index: 30;
+        width: 38%;
+        transform: skewX(-15deg);
+        background: var(--red);
+        opacity: 0;
+      }
+
+      .transition-wipe.alt {
+        z-index: 31;
+        background: var(--fg);
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="dragon-quant-promo"
+      data-start="0"
+      data-duration="24"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- Scene 1: establish the problem and the promise. -->
+      <section
+        id="scene-1"
+        class="scene clip"
+        data-start="0"
+        data-duration="4.5"
+        data-track-index="1"
+      >
+        <div class="decor-grid" data-layout-ignore></div>
+        <div class="decor-glow glow-a" data-layout-ignore></div>
+        <div class="decor-glow glow-b" data-layout-ignore></div>
+        <div class="scan-line" data-layout-ignore></div>
+        <div class="scene-content" data-layout-allow-occlusion>
+          <div class="brand-mark s1-mark" aria-label="Dragon Quant logo">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="kicker s1-kicker">A 股 · 短线决策</div>
+          <h1 class="s1-title">从行情噪音，到可执行证据</h1>
+          <p class="lede s1-body">Dragon Quant 把市场环境、龙头信号、量化因子和交易复盘，放进一条清晰的决策链。</p>
+          <div class="rule-line s1-line" aria-hidden="true"></div>
+          <div class="step-rail s1-steps" aria-label="工作流">
+            <div class="step"><span class="dot"></span><span>监测</span></div>
+            <span class="connector"></span>
+            <div class="step"><span class="dot"></span><span>筛选</span></div>
+            <span class="connector"></span>
+            <div class="step"><span class="dot"></span><span>决策</span></div>
+            <span class="connector"></span>
+            <div class="step"><span class="dot"></span><span>复盘</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scene 2: market context first. -->
+      <section
+        id="scene-2"
+        class="scene clip"
+        data-start="4.5"
+        data-duration="4.8"
+        data-track-index="1"
+      >
+        <div class="decor-grid" data-layout-ignore></div>
+        <div class="decor-glow glow-a" data-layout-ignore></div>
+        <div class="scan-line" data-layout-ignore></div>
+        <div class="scene-content split" data-layout-allow-occlusion>
+          <div class="copy">
+            <div class="kicker s2-kicker">01 · 先看市场</div>
+            <h2 class="s2-title">先判断环境，再决定出手。</h2>
+            <p class="lede s2-body">阶段、宽度、情绪与事件状态共同设定风险边界，避免把个股强势误读成市场机会。</p>
+            <div class="signal-strip s2-chips">
+              <span class="signal-chip">市场阶段</span>
+              <span class="signal-chip">宽度覆盖</span>
+              <span class="signal-chip">情绪温度</span>
+            </div>
+          </div>
+          <div class="visual market-shell s2-panel">
+            <div class="panel-topline">
+              <span class="panel-title">MARKET CONTEXT</span>
+              <span class="live-dot">LIVE</span>
+            </div>
+            <div class="metric-row s2-metrics">
+              <div class="metric"><div class="metric-value">实时</div><div class="metric-label">行情状态</div></div>
+              <div class="metric"><div class="metric-value">覆盖</div><div class="metric-label">市场宽度</div></div>
+              <div class="metric"><div class="metric-value">阶段</div><div class="metric-label">情绪边界</div></div>
+            </div>
+            <div class="trend-chart" aria-label="示意趋势图">
+              <div class="micro-label">breadth / sentiment / regime</div>
+              <div class="chart-line s2-chart-line" data-layout-ignore></div>
+              <div class="chart-bars s2-bars" data-layout-ignore>
+                <span style="--h: 32%"></span><span style="--h: 46%"></span><span style="--h: 54%"></span><span style="--h: 40%"></span><span style="--h: 62%"></span><span style="--h: 71%"></span><span style="--h: 56%"></span><span style="--h: 78%"></span><span style="--h: 66%"></span><span style="--h: 86%"></span><span style="--h: 74%"></span><span style="--h: 94%"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scene 3: candidate selection. -->
+      <section
+        id="scene-3"
+        class="scene clip"
+        data-start="9.3"
+        data-duration="4.8"
+        data-track-index="1"
+      >
+        <div class="decor-grid" data-layout-ignore></div>
+        <div class="decor-glow glow-b" data-layout-ignore></div>
+        <div class="scan-line" data-layout-ignore></div>
+        <div class="scene-content split" data-layout-allow-occlusion>
+          <div class="copy">
+            <div class="kicker s3-kicker">02 · 再找龙头</div>
+            <h2 class="s3-title">让真正的强，先被看见。</h2>
+            <p class="lede s3-body">龙头核心池把角色、趋势、量价、资金与历史证据放在同一张表里，减少来回切页。</p>
+            <div class="signal-strip s3-chips">
+              <span class="signal-chip">核心龙头</span>
+              <span class="signal-chip">强力副龙</span>
+              <span class="signal-chip">中军容量</span>
+            </div>
+          </div>
+          <div class="visual leader-shell s3-panel">
+            <div class="leader-head">
+              <strong>龙头核心池</strong>
+              <span>示例观察池 · 规则筛选</span>
+            </div>
+            <div class="leader-row s3-row">
+              <div><div class="leader-name">示例标的 A</div><div class="leader-code">600XXX</div></div>
+              <div class="leader-cell"><strong>趋势</strong>共振</div>
+              <div class="leader-cell"><strong>资金</strong>校验</div>
+              <span class="tag">核心龙头</span>
+            </div>
+            <div class="leader-row s3-row">
+              <div><div class="leader-name">示例标的 B</div><div class="leader-code">000XXX</div></div>
+              <div class="leader-cell"><strong>量价</strong>放量</div>
+              <div class="leader-cell"><strong>市场</strong>跟随</div>
+              <span class="tag">中军容量</span>
+            </div>
+            <div class="leader-row s3-row">
+              <div><div class="leader-name">示例标的 C</div><div class="leader-code">300XXX</div></div>
+              <div class="leader-cell"><strong>历史</strong>待补</div>
+              <div class="leader-cell"><strong>证据</strong>观察</div>
+              <span class="tag">候选</span>
+            </div>
+            <div class="leader-row s3-row">
+              <div><div class="leader-name">示例标的 D</div><div class="leader-code">688XXX</div></div>
+              <div class="leader-cell"><strong>风险</strong>受控</div>
+              <div class="leader-cell"><strong>换手</strong>适中</div>
+              <span class="tag">副龙</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scene 4: diagnosis and exit plan. -->
+      <section
+        id="scene-4"
+        class="scene clip"
+        data-start="14.1"
+        data-duration="4.8"
+        data-track-index="1"
+      >
+        <div class="decor-grid" data-layout-ignore></div>
+        <div class="decor-glow glow-a" data-layout-ignore></div>
+        <div class="scan-line" data-layout-ignore></div>
+        <div class="scene-content split" data-layout-allow-occlusion>
+          <div class="copy">
+            <div class="kicker s4-kicker">03 · 明确执行</div>
+            <h2 class="s4-title">买入之外，先写好卖出。</h2>
+            <p class="lede s4-body">详情诊断同时给出触发条件、持有条件、止盈与止损，并把数据可靠度放在结论旁边。</p>
+            <div class="rule-line s4-line" aria-hidden="true"></div>
+          </div>
+          <div class="visual diagnosis-shell s4-panel">
+            <div class="diagnosis-panel s4-left">
+              <h3>Stock Diagnosis</h3>
+              <div class="stock-title">示例标的 · 详情诊断</div>
+              <div class="decision-card s4-buy">
+                <div class="decision-label">买入触发</div>
+                <div class="decision-text">满足趋势、量价与市场边界后再执行</div>
+              </div>
+              <div class="decision-card s4-sell">
+                <div class="decision-label">卖出触发</div>
+                <div class="decision-text">失守关键条件，按计划退出</div>
+              </div>
+            </div>
+            <div class="diagnosis-panel s4-right">
+              <h3>Evidence</h3>
+              <div class="evidence-list">
+                <div class="evidence-row"><span>个股数据</span><strong>完整度</strong></div>
+                <div class="evidence-row"><span>市场覆盖</span><strong>可核验</strong></div>
+                <div class="evidence-row"><span>历史证据</span><strong>滚动样本</strong></div>
+                <div class="evidence-row"><span>资金方向</span><strong>校验项</strong></div>
+              </div>
+              <div class="reliability s4-reliability">
+                <strong>数据可靠度优先</strong>
+                <span>缺失、过期或样本不足时，明确提示，不把不确定性藏在结论里。</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scene 5: close with the product and the workflow. -->
+      <section
+        id="scene-5"
+        class="scene clip"
+        data-start="18.9"
+        data-duration="5.1"
+        data-track-index="1"
+      >
+        <div class="decor-grid" data-layout-ignore></div>
+        <div class="decor-glow glow-a" data-layout-ignore></div>
+        <div class="decor-glow glow-b" data-layout-ignore></div>
+        <div class="scene-content center" data-layout-allow-occlusion>
+          <div class="brand-mark final-mark s5-mark" aria-label="Dragon Quant logo">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="kicker s5-kicker">DRAGON QUANT</div>
+          <h2 class="final-title s5-title">监测 · 筛选 · 决策 · 复盘</h2>
+          <p class="final-subtitle s5-subtitle">让每一次出手，都有证据可回看。</p>
+          <div class="url-pill s5-url">dragon-quant-trading.jack0217.chatgpt.site</div>
+          <div class="risk-note s5-note">研究与决策辅助工具 · 不构成投资建议 · 不保证收益</div>
+        </div>
+      </section>
+
+      <!-- Scene transitions keep the multi-scene composition continuous. -->
+      <div id="wipe-1" class="transition-wipe" data-layout-ignore data-layout-allow-occlusion></div>
+      <div id="wipe-1-alt" class="transition-wipe alt" data-layout-ignore data-layout-allow-occlusion></div>
+      <div id="wipe-2" class="transition-wipe" data-layout-ignore data-layout-allow-occlusion></div>
+      <div id="wipe-2-alt" class="transition-wipe alt" data-layout-ignore data-layout-allow-occlusion></div>
+      <div id="wipe-3" class="transition-wipe" data-layout-ignore data-layout-allow-occlusion></div>
+      <div id="wipe-3-alt" class="transition-wipe alt" data-layout-ignore data-layout-allow-occlusion></div>
+      <div id="wipe-4" class="transition-wipe" data-layout-ignore data-layout-allow-occlusion></div>
+      <div id="wipe-4-alt" class="transition-wipe alt" data-layout-ignore data-layout-allow-occlusion></div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // Ambient motion is deliberately slow and finite for deterministic capture.
+      tl.to(".glow-a", { scale: 1.12, opacity: 0.84, duration: 3.2, ease: "sine.inOut", repeat: 6, yoyo: true }, 0);
+      tl.to(".glow-b", { scale: 1.08, opacity: 0.72, duration: 3.8, ease: "sine.inOut", repeat: 5, yoyo: true }, 0.2);
+      tl.to(".scan-line", { x: 2350, duration: 6, ease: "none", repeat: 3 }, 0);
+
+      // Scene 1 entrances.
+      tl.from("#scene-1 .s1-mark", { y: 28, scale: 0.78, opacity: 0, duration: 0.55, ease: "back.out(1.5)" }, 0.24);
+      tl.from("#scene-1 .s1-kicker", { x: -34, opacity: 0, duration: 0.48, ease: "power3.out" }, 0.55);
+      tl.from("#scene-1 .s1-title", { y: 48, opacity: 0, duration: 0.74, ease: "expo.out" }, 0.78);
+      tl.from("#scene-1 .s1-body", { y: 28, opacity: 0, duration: 0.56, ease: "power2.out" }, 1.45);
+      tl.from("#scene-1 .s1-line", { scaleX: 0, opacity: 0, duration: 0.5, ease: "power4.out" }, 1.95);
+      tl.from("#scene-1 .s1-steps .step", { y: 22, opacity: 0, duration: 0.42, ease: "back.out(1.7)", stagger: 0.1 }, 2.18);
+
+      // Scene 2 entrances.
+      tl.from("#scene-2 .s2-kicker", { x: -32, opacity: 0, duration: 0.45, ease: "power3.out" }, 4.72);
+      tl.from("#scene-2 .s2-title", { y: 42, opacity: 0, duration: 0.7, ease: "expo.out" }, 4.94);
+      tl.from("#scene-2 .s2-body", { y: 26, opacity: 0, duration: 0.52, ease: "power2.out" }, 5.56);
+      tl.from("#scene-2 .s2-chips .signal-chip", { y: 18, opacity: 0, duration: 0.4, ease: "back.out(1.4)", stagger: 0.1 }, 5.94);
+      tl.from("#scene-2 .s2-panel", { x: 60, scale: 0.96, opacity: 0, duration: 0.78, ease: "power4.out" }, 4.76);
+      tl.from("#scene-2 .s2-metrics .metric", { y: 22, opacity: 0, duration: 0.48, ease: "power3.out", stagger: 0.12 }, 5.34);
+      tl.from("#scene-2 .s2-bars span", { scaleY: 0, opacity: 0, duration: 0.52, ease: "power2.out", stagger: 0.06 }, 6.16);
+      tl.from("#scene-2 .s2-chart-line", { scaleX: 0, opacity: 0, duration: 0.72, ease: "power4.out" }, 6.12);
+
+      // Scene 3 entrances.
+      tl.from("#scene-3 .s3-kicker", { x: -34, opacity: 0, duration: 0.45, ease: "power3.out" }, 9.52);
+      tl.from("#scene-3 .s3-title", { y: 42, opacity: 0, duration: 0.68, ease: "expo.out" }, 9.74);
+      tl.from("#scene-3 .s3-body", { y: 24, opacity: 0, duration: 0.54, ease: "power2.out" }, 10.34);
+      tl.from("#scene-3 .s3-chips .signal-chip", { y: 16, opacity: 0, duration: 0.4, ease: "back.out(1.5)", stagger: 0.1 }, 10.76);
+      tl.from("#scene-3 .s3-panel", { x: 66, opacity: 0, duration: 0.76, ease: "power4.out" }, 9.56);
+      tl.from("#scene-3 .s3-row", { x: 34, opacity: 0, duration: 0.48, ease: "power3.out", stagger: 0.13 }, 10.2);
+
+      // Scene 4 entrances.
+      tl.from("#scene-4 .s4-kicker", { x: -34, opacity: 0, duration: 0.45, ease: "power3.out" }, 14.32);
+      tl.from("#scene-4 .s4-title", { y: 42, opacity: 0, duration: 0.7, ease: "expo.out" }, 14.54);
+      tl.from("#scene-4 .s4-body", { y: 24, opacity: 0, duration: 0.54, ease: "power2.out" }, 15.18);
+      tl.from("#scene-4 .s4-line", { scaleX: 0, opacity: 0, duration: 0.48, ease: "power4.out" }, 15.7);
+      tl.from("#scene-4 .s4-panel", { x: 64, scale: 0.97, opacity: 0, duration: 0.8, ease: "power4.out" }, 14.36);
+      tl.from("#scene-4 .s4-left", { y: 24, opacity: 0, duration: 0.5, ease: "back.out(1.4)" }, 14.98);
+      tl.from("#scene-4 .s4-right", { y: 24, opacity: 0, duration: 0.5, ease: "power3.out" }, 15.16);
+      tl.from("#scene-4 .s4-buy", { y: 16, opacity: 0, duration: 0.44, ease: "power2.out" }, 15.48);
+      tl.from("#scene-4 .s4-sell", { y: 16, opacity: 0, duration: 0.44, ease: "power2.out" }, 15.72);
+      tl.from("#scene-4 .s4-reliability", { scale: 0.95, opacity: 0, duration: 0.48, ease: "back.out(1.2)" }, 15.96);
+
+      // Scene 5 entrances and final fade only.
+      tl.from("#scene-5 .s5-mark", { y: 24, scale: 0.72, opacity: 0, duration: 0.58, ease: "back.out(1.6)" }, 19.14);
+      tl.from("#scene-5 .s5-kicker", { y: 22, opacity: 0, duration: 0.46, ease: "power3.out" }, 19.54);
+      tl.from("#scene-5 .s5-title", { y: 38, opacity: 0, duration: 0.72, ease: "expo.out" }, 19.74);
+      tl.from("#scene-5 .s5-subtitle", { y: 22, opacity: 0, duration: 0.5, ease: "power2.out" }, 20.4);
+      tl.from("#scene-5 .s5-url", { y: 18, scale: 0.94, opacity: 0, duration: 0.56, ease: "back.out(1.3)" }, 20.84);
+      tl.from("#scene-5 .s5-note", { opacity: 0, duration: 0.46, ease: "sine.out" }, 21.42);
+      tl.to("#scene-5 .scene-content", { opacity: 0, duration: 0.38, ease: "power2.in" }, 23.58);
+
+      // Two-color wipes at each scene boundary. The outgoing scene remains intact underneath.
+      const transitions = [
+        ["#wipe-1", "#wipe-1-alt", 4.12],
+        ["#wipe-2", "#wipe-2-alt", 8.92],
+        ["#wipe-3", "#wipe-3-alt", 13.72],
+        ["#wipe-4", "#wipe-4-alt", 18.52],
+      ];
+      transitions.forEach(([red, cream, at]) => {
+        tl.fromTo(red, { xPercent: -330, opacity: 1 }, { xPercent: 0, opacity: 1, duration: 0.28, ease: "power4.in" }, at);
+        tl.fromTo(cream, { xPercent: -330, opacity: 1 }, { xPercent: 0, opacity: 1, duration: 0.24, ease: "power3.in" }, at + 0.2);
+        tl.to(cream, { xPercent: 680, opacity: 0, duration: 0.3, ease: "power3.out" }, at + 0.44);
+        tl.to(red, { xPercent: 680, opacity: 0, duration: 0.34, ease: "power4.out" }, at + 0.5);
+      });
+
+      window.__timelines["dragon-quant-promo"] = tl;
+    </script>
+  </body>
+</html>
