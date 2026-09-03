@@ -1,6 +1,6 @@
 import { useTrading } from '../../context/Store';
 import { Badge } from '../ui/badge';
-import { ShieldAlert, Thermometer, Activity, Sparkles, Rocket, Target, Layers, ShieldCheck, Skull } from 'lucide-react';
+import { ShieldAlert, Thermometer, Activity, Rocket, Target, Layers, ShieldCheck, Skull } from 'lucide-react';
 import { cn } from '../ui/utils';
 import { motion, AnimatePresence } from 'motion/react';
 // V65.1 PERF: Lazy load heavy sub-components to reduce initial bundle & parse time
@@ -74,27 +74,14 @@ const EVENT_MODE_CONFIG = {
 } as const;
 
 // Global War Room Style Constants
-const WR_CARD_CLASS = "bg-white border border-slate-200 rounded-[2rem] shadow-xl shadow-slate-200/40 overflow-hidden transition-all duration-300 hover:shadow-2xl hover:shadow-slate-300/50 transform-gpu";
-const WR_DARK_CARD_CLASS = "bg-slate-900 border border-white/10 rounded-[2rem] shadow-2xl overflow-hidden transition-all duration-300 transform-gpu";
+const WR_CARD_CLASS = "bg-white border border-slate-200 rounded-2xl shadow-md shadow-slate-200/40 overflow-hidden transition-all duration-300 hover:shadow-lg hover:shadow-slate-300/50 transform-gpu";
+const WR_DARK_CARD_CLASS = "bg-slate-900 border border-white/10 rounded-2xl shadow-lg overflow-hidden transition-all duration-300 transform-gpu";
 
 export const Dashboard: React.FC = () => {
-    const { stocks = [], metrics = {} as any, phase, marketIndices = [], sentimentHistory = [], isMarketOpen, themes = [], marketThemes = [], eventDrivenMode } = useTrading();
+    const { stocks = [], metrics = {} as any, phase, marketIndices = [], sentimentHistory = [], isMarketOpen, eventDrivenMode } = useTrading();
     const [selectedStock, setSelectedStock] = React.useState<any>(null);
 
-    // V65.1 PERF: Memoize all derived data to prevent re-computation on every render
-    const momentumLeaders = React.useMemo(() => 
-        stocks.length > 0 
-            ? [...stocks].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0)).slice(0, 3)
-            : []
-    , [stocks]);
-        
-    const activeThemes = React.useMemo(() => {
-        const source = (marketThemes && marketThemes.length > 0) ? marketThemes : themes;
-        return [...source]
-            .filter(t => t.name !== '自动发现' && t.name !== '自动扫描' && t.name !== 'Auto-Discovered')
-            .sort((a, b) => (b.strength || 0) - (a.strength || 0));
-    }, [themes, marketThemes]);
-
+    // V65.1 PERF: Memoize derived data to prevent re-computation on every render
     const topDragon = React.useMemo(() => 
         [...stocks].sort((a, b) => (b.strengthScore || 0) - (a.strengthScore || 0))[0]
     , [stocks]);
@@ -384,22 +371,6 @@ export const Dashboard: React.FC = () => {
                     </div>
                 </div>
                 </DeferredSection>
-
-                {/* ZONE 7: FOOTER INTELLIGENCE (Active Theme Tags) */}
-                <div className="border-t border-slate-200 pt-8">
-                     <div className="flex items-center gap-3 mb-4 opacity-60">
-                         <Sparkles className="size-4 text-slate-400" />
-                         <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">活跃题材云图</h4>
-                     </div>
-                     <div className="flex flex-wrap gap-2">
-                         {activeThemes.slice(0, 15).map(t => (
-                             <Badge key={t.id} variant="outline" className={cn("text-[9px] font-black border-slate-200 text-slate-500", 
-                                 t.type === 'Main' && "border-red-200 text-red-600 bg-red-50")}>
-                                 {t.name}
-                             </Badge>
-                         ))}
-                     </div>
-                </div>
 
             </motion.div>
             </React.Suspense>

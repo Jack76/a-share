@@ -850,7 +850,7 @@ export const DragonPool: React.FC = () => {
       transition={{ duration: 0.3 }}
       className="max-w-[1600px] mx-auto px-2 py-4 md:px-10 md:py-16 space-y-4 md:space-y-12 transform-gpu"
     >
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 md:gap-6 bg-white border border-slate-200 p-4 md:p-8 rounded-[2rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 md:gap-6 bg-white border border-slate-200 p-4 md:p-6 rounded-2xl md:rounded-3xl shadow-md md:shadow-lg">
         <div>
           <div className="flex items-center gap-3 mb-1">
             <h2 className="text-2xl md:text-3xl font-black tracking-tighter italic uppercase text-slate-900">
@@ -921,7 +921,8 @@ export const DragonPool: React.FC = () => {
         </div>
       </div>
 
-      {historyLoadProgress.total > 0 && (
+      {historyLoadProgress.total > 0 &&
+        (historyLoadProgress.pending > 0 || historyLoadProgress.failed > 0 || historyLoadProgress.isLoading) && (
         <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 shadow-sm">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <div className="flex items-center gap-2 text-[10px] font-black tracking-wide text-slate-700">
@@ -1086,15 +1087,14 @@ export const DragonPool: React.FC = () => {
          </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-[9px] font-bold text-slate-500">
-        <span className="flex items-center gap-1.5 font-black text-slate-700">
-          <Activity className="h-3.5 w-3.5 text-red-500" />
-          结论口径
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-[9px] font-bold text-slate-500">
+        <span className="flex items-center gap-1 font-black text-slate-700">
+          <Activity className="h-3 w-3 text-red-500" />
+          数据口径
         </span>
-        <span><b className="text-slate-700">个股</b>＝K线与技术指标完整度</span>
-        <span><b className="text-slate-700">市场</b>＝全市场宽度覆盖状态</span>
-        <span><b className="text-slate-700">证据</b>＝非重叠滚动代理样本；规则信心不是上涨概率</span>
-        <span><b className="text-slate-700">大单净额</b>＝供应商大单口径；量价压力仅用于方向校验</span>
+        <span><b className="text-slate-700">个股</b>：K线/指标</span>
+        <span><b className="text-slate-700">市场</b>：宽度覆盖</span>
+        <span><b className="text-slate-700">证据</b>：滚动样本</span>
       </div>
 
       {/* Mobile View: Cards (Optional) */}
@@ -1116,7 +1116,7 @@ export const DragonPool: React.FC = () => {
 
       {/* Desktop/Table View */}
       <Card className={cn(
-          "border border-slate-200 shadow-2xl overflow-hidden bg-white rounded-[2.5rem] transform-gpu",
+          "border border-slate-200 shadow-md overflow-hidden bg-white rounded-2xl transform-gpu",
           viewMode === 'card' ? "hidden md:block" : "block"
       )}>
         <CardContent className="p-0 overflow-x-auto">
